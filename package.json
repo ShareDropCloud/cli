@@ -1,0 +1,58 @@
+{
+  "name": "@sharedrop/cli",
+  "version": "1.3.1",
+  "description": "Upload and manage HTML pages on sharedrop from the terminal",
+  "license": "MIT",
+  "author": "Scott Owen",
+  "homepage": "https://github.com/ShareDropCloud/cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ShareDropCloud/cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ShareDropCloud/cli/issues"
+  },
+  "type": "module",
+  "bin": {
+    "sharedrop": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run --reporter=verbose",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "sharedrop",
+    "html",
+    "cli",
+    "upload",
+    "ai-agent",
+    "shared-drop"
+  ],
+  "dependencies": {
+    "commander": "^14.0.3",
+    "conf": "^15.1.0",
+    "open": "^11.0.0",
+    "chalk": "^5.6.2",
+    "cli-table3": "^0.6.5",
+    "ora": "^9.3.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0",
+    "vitest": "^4.1.2"
+  },
+  "engines": {
+    "node": ">=18.5.0"
+  }
+}
