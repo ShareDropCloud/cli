@@ -50,21 +50,27 @@ function detectContentType(filename: string): string {
 }
 
 /**
- * Serveable bundle-asset extensions → stored content-type. Mirror of
- * lib/uploads/bundle-path.ts:ASSET_CONTENT_TYPES — the server's allowlist for
- * what a page bundle may contain. Duplicated here for the same app-boundary
- * reason as EXTENSION_TO_MIME above; keep aligned with that file. Files whose
- * extension isn't here are skipped from a folder upload (the server would
- * reject the whole bundle otherwise — e.g. a stray .DS_Store or README.md).
+ * Serveable bundle-asset extensions → the MIME sent on the wire (the bundle/sign
+ * `content_type` and the matching PUT `Content-Type`). These are the extensions
+ * the server's allowlist (lib/uploads/bundle-path.ts:ASSET_CONTENT_TYPES) accepts;
+ * a file whose extension isn't here is skipped from a folder upload (the server
+ * would reject the whole bundle otherwise — e.g. a stray .DS_Store or README.md).
+ *
+ * MUST be bare types with NO `; charset=…` parameter. The uploads Worker checks
+ * the PUT against the signed token's `mime` claim by stripping parameters from
+ * the actual header but comparing it against the VERBATIM claim — so a
+ * charset-qualified value ("text/css; charset=utf-8") never matches the stripped
+ * "text/css" and fails with `mime_mismatch`. (The server re-derives the stored
+ * content-type from the extension at finalize, so charset isn't lost on serve.)
  */
 const BUNDLE_ASSET_MIME: Record<string, string> = {
-  js: "text/javascript; charset=utf-8",
-  mjs: "text/javascript; charset=utf-8",
-  css: "text/css; charset=utf-8",
-  json: "application/json; charset=utf-8",
-  map: "application/json; charset=utf-8",
-  csv: "text/csv; charset=utf-8",
-  txt: "text/plain; charset=utf-8",
+  js: "text/javascript",
+  mjs: "text/javascript",
+  css: "text/css",
+  json: "application/json",
+  map: "application/json",
+  csv: "text/csv",
+  txt: "text/plain",
   svg: "image/svg+xml",
   png: "image/png",
   apng: "image/apng",

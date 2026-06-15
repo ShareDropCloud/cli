@@ -70,18 +70,32 @@ describe("sharedrop upload <dir> — bundle pipeline (#81)", () => {
     expect(signSpy).toHaveBeenCalledBefore(streamSpy as never);
     expect(streamSpy).toHaveBeenCalledBefore(finalizeSpy as never);
 
-    // sign: root index.html (text/html) + the two assets with their MIME.
+    // sign: root index.html (text/html) + the two assets with BARE MIME types.
     const signArg = signSpy.mock.calls[0][0];
     expect(signArg.files).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ filename: "index.html", content_type: "text/html" }),
-        expect.objectContaining({ filename: "styles.css", content_type: "text/css; charset=utf-8" }),
-        expect.objectContaining({ filename: "script.js", content_type: "text/javascript; charset=utf-8" }),
+        expect.objectContaining({ filename: "styles.css", content_type: "text/css" }),
+        expect.objectContaining({ filename: "script.js", content_type: "text/javascript" }),
       ]),
     );
 
-    // One PUT per file (root + 2 assets).
+    // Regression guard (#mime_mismatch): the signed content_type must never
+    // carry a `; charset=…` parameter — the Worker compares the param-stripped
+    // PUT header against the verbatim token claim, so charset → mime_mismatch.
+    for (const f of signArg.files) {
+      expect(f.content_type).not.toContain(";");
+      expect(f.content_type).not.toContain("charset");
+    }
+
+    // One PUT per file (root + 2 assets), and each PUT's Content-Type must equal
+    // the content_type signed for that same file (so claim === actual).
     expect(streamSpy).toHaveBeenCalledTimes(3);
+    for (const call of streamSpy.mock.calls) {
+      const putContentType = call[3];
+      expect(putContentType).not.toContain("charset");
+      expect(signArg.files.map((f) => f.content_type)).toContain(putContentType);
+    }
 
     // finalize: exactly one "index.html" path, assets carry their relative refs.
     const finalizeArg = finalizeSpy.mock.calls[0][0];
