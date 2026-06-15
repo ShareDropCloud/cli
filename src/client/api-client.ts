@@ -52,6 +52,45 @@ export interface FinalizeUploadResponse {
   contentType: string;
 }
 
+// ─── Bundle (folder) upload types — Epic 2 / #81, #90 ─────────────────────
+
+export interface SignBundleParams {
+  files: Array<{ filename: string; content_type: string; size_bytes: number }>;
+  workspace?: string;
+}
+
+export interface SignBundleResponse {
+  /** Index-aligned with the request `files`: one signed slot per file. */
+  files: Array<{
+    filename: string;
+    upload_url: string;
+    upload_token: string;
+    object_key: string;
+  }>;
+  finalize_url: string;
+}
+
+export interface FinalizeBundleParams {
+  /** Exactly one file must have path "index.html"; the rest are assets. */
+  files: Array<{ path: string; object_key: string; upload_token: string }>;
+  title?: string;
+  visibility?: "public" | "private" | "shared";
+  mode?: "static" | "interactive";
+  workspace_id?: string;
+  page_id?: string;
+}
+
+export interface FinalizeBundleResponse {
+  url: string;
+  page_id: string;
+  slug: string;
+  visibility: string;
+  mode: string;
+  kind: string;
+  assets: number;
+  was_reupload?: boolean;
+}
+
 export class SharedropApiError extends Error {
   constructor(
     public code: string,
@@ -298,5 +337,69 @@ export class SharedropApiClient {
     }
 
     return (await res.json()) as FinalizeUploadResponse;
+  }
+
+  // ─── Bundle (folder) upload pipeline ──────────────────────────────────
+  //
+  // Mirrors the single-file sign → PUT → finalize flow but batches the whole
+  // manifest: one /api/upload/bundle/sign charge mints a token per file, each
+  // file is streamed to its own upload_url via `streamUpload`, then
+  // /api/upload/bundle/finalize promotes them into one page. Both endpoints
+  // return a flat JSON body (not the V1SuccessResponse envelope), so they
+  // bypass `request` and reuse `throwFlatUploadError` for billing-aware errors.
+
+  private async throwFlatUploadError(
+    res: Response,
+    fallbackCode: string,
+  ): Promise<never> {
+    const body = (await res.json().catch(() => ({}))) as
+      | { error: { code: string; message: string } | string }
+      | Record<string, unknown>;
+    const errField = (body as { error?: unknown }).error;
+    if (errField && typeof errField === "object" && "code" in errField) {
+      const e = errField as { code: string; message: string };
+      const envelope = BILLING_CODES.has(e.code)
+        ? (e as unknown as BillingErrorEnvelope["error"])
+        : undefined;
+      throw new SharedropApiError(e.code, e.message, res.status, envelope);
+    }
+    const msg = typeof errField === "string" ? errField : res.statusText;
+    throw new SharedropApiError(fallbackCode, msg, res.status);
+  }
+
+  async signBundle(params: SignBundleParams): Promise<SignBundleResponse> {
+    const url = `${this.baseUrl}/api/upload/bundle/sign`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) await this.throwFlatUploadError(res, "BUNDLE_SIGN_FAILED");
+    return (await res.json()) as SignBundleResponse;
+  }
+
+  async finalizeBundle(
+    params: FinalizeBundleParams,
+  ): Promise<FinalizeBundleResponse> {
+    const url = `${this.baseUrl}/api/upload/bundle/finalize`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      // 401 from finalize = expired upload window — surface a distinct code.
+      await this.throwFlatUploadError(
+        res,
+        res.status === 401 ? "TOKEN_EXPIRED" : "BUNDLE_FINALIZE_FAILED",
+      );
+    }
+    return (await res.json()) as FinalizeBundleResponse;
   }
 }

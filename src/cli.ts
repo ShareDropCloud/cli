@@ -18,15 +18,19 @@ const program = new Command()
   .option("--token <token>", "API token; overrides SHAREDROP_TOKEN, .env, and saved login");
 
 program
-  .command("upload <file>")
-  .description("Upload a file (use - for stdin). Any supported type: HTML, MHTML, Markdown, PDF, images.")
+  .command("upload <path>")
+  .description(
+    "Upload a file (use - for stdin) or a folder. Files: HTML, MHTML, Markdown, PDF, images. " +
+      "A folder uploads as a multi-file bundle (entry HTML + relative css/js/image/font assets) — use --mode interactive to keep its JavaScript.",
+  )
   .option("--title <title>", "Page title (auto-detected if omitted)")
   .option("--visibility <vis>", "Page visibility: public, private, shared", "private")
   .option("--mode <mode>", "Page mode (HTML only): static, interactive", "static")
+  .option("--entry <file>", "Entry HTML for a folder upload (relative to the folder)", "index.html")
   .option("--workspace <id>", "Upload to workspace")
   .option("--page-id <id>", "Replace an existing page's content (keeps the same URL) instead of creating a new page")
   .option("--json", "Force JSON output")
-  .action((file, opts) => uploadCommand(file, opts, program.opts()));
+  .action((path, opts) => uploadCommand(path, opts, program.opts()));
 
 program
   .command("list")
