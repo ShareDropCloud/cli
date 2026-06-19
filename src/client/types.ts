@@ -68,7 +68,11 @@ export interface ListParams {
 // cannot import from `@/lib/...`. Keep these definitions in sync with the
 // canonical source.
 
-export type BillingErrorCode = "TIER_LIMIT" | "STORAGE_LIMIT" | "SEAT_LIMIT";
+export type BillingErrorCode =
+  | "TIER_LIMIT"
+  | "STORAGE_LIMIT"
+  | "SEAT_LIMIT"
+  | "FILE_SIZE_EXCEEDED";
 
 export interface PricingBlock {
   pro: { monthly: number; storageGb: number; currency: "USD" };
@@ -94,6 +98,12 @@ export interface BillingErrorEnvelope {
     capGb?: number;
     /** Set only for SEAT_LIMIT. */
     currentSeats?: number;
+    /** Set only for FILE_SIZE_EXCEEDED — the tier's per-file cap in bytes. */
+    limitBytes?: number;
+    /** Set only for FILE_SIZE_EXCEEDED — the size the client tried to upload. */
+    requestedBytes?: number;
+    /** Set only for paid-tier STORAGE_LIMIT — the recommended add-on block (GB). */
+    recommendedAddonGb?: 25 | 250 | 1024;
     upgradeUrl: string;
     pricing: PricingBlock;
   };

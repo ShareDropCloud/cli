@@ -44,11 +44,28 @@ function renderEnvelope(env: BillingErrorEnvelope["error"]): string {
     const headline = chalk.red(
       `Storage limit reached: ${env.currentUsageGb} GB of ${env.capGb} GB used.`,
     );
-    // Smallest add-on block per CONTEXT.md D-19 (storageAddons[0] = 25 GB).
-    const addon = env.pricing.storageAddons[0];
+    // #126 — recommend the add-on block the server picked (matches upgradeUrl),
+    // falling back to the smallest block (storageAddons[0] = 25 GB).
+    const addon =
+      (env.recommendedAddonGb !== undefined
+        ? env.pricing.storageAddons.find((a) => a.blockGb === env.recommendedAddonGb)
+        : undefined) ?? env.pricing.storageAddons[0];
     const costLine = addon
       ? `Pro: $${env.pricing.pro.monthly}/mo · Pro + ${addon.blockGb} GB add-on: $${env.pricing.pro.monthly + addon.monthly}/mo`
       : `Pro: $${env.pricing.pro.monthly}/mo`;
+    return [headline, costLine, upgradeLine].join("\n");
+  }
+
+  if (env.code === "FILE_SIZE_EXCEEDED") {
+    const mb = (bytes?: number) =>
+      bytes !== undefined ? Math.round(bytes / (1024 * 1024)) : "?";
+    const headline = chalk.red(
+      `File too large: ${mb(env.requestedBytes)} MB exceeds the ${mb(env.limitBytes)} MB per-file limit.`,
+    );
+    const costLine =
+      env.requiredTier === "team"
+        ? `Team workspace: $${env.pricing.team.bundle.monthly}/mo (${env.pricing.team.bundle.seats} seats)`
+        : `Pro: $${env.pricing.pro.monthly}/mo`;
     return [headline, costLine, upgradeLine].join("\n");
   }
 

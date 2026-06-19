@@ -11,10 +11,16 @@ import type {
  * is attached to the thrown `SharedropApiError` so `handleError` can render
  * the friendly 402 block (or emit the verbatim envelope in --json mode).
  *
- * `FILE_SIZE_EXCEEDED` is intentionally NOT in this set: it's a 402 from
- * /api/upload/sign but is handled by the generic error path (no upgrade UI).
+ * #126 — `FILE_SIZE_EXCEEDED` (a 402 from /api/upload/sign) now carries the
+ * full envelope (price + upgradeUrl) and joins the set so the CLI renders its
+ * upsell consistently with the other capacity codes.
  */
-const BILLING_CODES = new Set(["STORAGE_LIMIT", "TIER_LIMIT", "SEAT_LIMIT"]);
+const BILLING_CODES = new Set([
+  "STORAGE_LIMIT",
+  "TIER_LIMIT",
+  "SEAT_LIMIT",
+  "FILE_SIZE_EXCEEDED",
+]);
 
 // ─── UPLOAD-07 streamed-upload types ──────────────────────────────────────
 
