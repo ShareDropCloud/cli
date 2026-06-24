@@ -78,6 +78,7 @@ sharedrop list              # List your pages (shows the ID column)
 sharedrop search <query>    # Find pages by title, slug, id, or file type (e.g. "jpeg")
 sharedrop get <ref>         # Show page details — ref is an id, slug, or URL
 sharedrop fetch <ref>       # Pull a page's RAW content (stdout by default, or -o file)
+sharedrop download <ref>    # Download a page's full artefact as a ZIP (root + all assets)
 sharedrop update <ref> [file]  # Re-upload content (same URL, new version) and/or update title/visibility
 sharedrop delete <ref>      # Delete a page
 sharedrop share <ref> --email someone@example.com   # Share with a person
@@ -162,6 +163,31 @@ sharedrop fetch 4knxz9 | grep -i title # pipe into another tool
 
 Distinct from a zip **download**: `fetch` mints a short-lived signed URL, GETs it, and
 emits the raw root document — the agent-native read path.
+
+### download
+
+Download a page's **complete artefact as a zip** — the root document plus every asset
+(images, CSS, JS) under it, with their original relative layout preserved. Use this when
+you want the whole bundle on disk; use `fetch` when you just want the raw root document.
+
+```bash
+sharedrop download 4knxz9                 # writes 4knxz9.zip
+sharedrop download 4knxz9 -o report.zip   # write to a specific path
+sharedrop download 4knxz9 -o - > out.zip  # stream the zip to stdout
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-o, --output <path>` | `<ref>.zip` | Output file path (`-` streams the zip to stdout) |
+| `--json` | — | Force machine-readable JSON output (errors only) |
+
+You can download a page you **own**, or one that has been **shared to you with download
+enabled** (the sharer ticks "allow zip download" on your access grant, matched against your
+account's verified email). Pages you can't download return a not-found error — the same
+response as a page that doesn't exist, so existence is never leaked.
+
+> The default filename uses the **ref** you pass (`<ref>.zip`), not the page's slug — the
+> slug isn't known client-side without an extra lookup. Pass `-o` to control the name.
 
 ### share
 
