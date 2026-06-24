@@ -77,6 +77,7 @@ sharedrop upload <file>     # Upload a file (HTML, image, PDF, MHTML, Markdown �
 sharedrop list              # List your pages (shows the ID column)
 sharedrop search <query>    # Find pages by title, slug, id, or file type (e.g. "jpeg")
 sharedrop get <ref>         # Show page details — ref is an id, slug, or URL
+sharedrop fetch <ref>       # Pull a page's RAW content (stdout by default, or -o file)
 sharedrop update <ref> [file]  # Re-upload content (same URL, new version) and/or update title/visibility
 sharedrop delete <ref>      # Delete a page
 sharedrop share <ref> --email someone@example.com   # Share with a person
@@ -140,6 +141,27 @@ sharedrop update 4knxz9 report.html               # replace content — same URL
 sharedrop update 4knxz9 --title "New title" --visibility shared
 sharedrop delete 4knxz9
 ```
+
+### fetch
+
+Pull a page's **raw content** into your terminal or an agent's context — the original
+bytes with their real content type, not the sandboxed viewer page. `get` shows metadata;
+`fetch` returns the content itself. Works for your own pages, public pages, and pages
+shared with you; available on every tier.
+
+```bash
+sharedrop fetch 4knxz9                 # raw content to stdout
+sharedrop fetch 4knxz9 -o report.html  # write to a file
+sharedrop fetch 4knxz9 | grep -i title # pipe into another tool
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-o, --output <path>` | stdout | Write the bytes to a file (`-` is stdout) |
+| `--json` | — | Force machine-readable JSON output |
+
+Distinct from a zip **download**: `fetch` mints a short-lived signed URL, GETs it, and
+emits the raw root document — the agent-native read path.
 
 ### share
 

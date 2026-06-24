@@ -217,6 +217,54 @@ export class SharedropApiClient {
     );
   }
 
+  /**
+   * #139 — download a page's complete artefact as a zip. The response body is
+   * BINARY (application/zip), so this bypasses the JSON `request` helper and
+   * returns a Buffer. On error the body is the JSON v1 error envelope; map it to
+   * SharedropApiError (same shape as requestVoid) so handleError picks the right
+   * exit code.
+   */
+  async downloadPage(pageId: string): Promise<Buffer> {
+    const res = await fetch(`${this.baseUrl}/api/v1/pages/${pageId}/download`, {
+      headers: { "Authorization": `Bearer ${this.apiKey}` },
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as Partial<V1ErrorResponse>;
+      const error = body.error || { code: "UNKNOWN", message: res.statusText };
+      throw new SharedropApiError(error.code, error.message, res.status);
+    }
+
+    return Buffer.from(await res.arrayBuffer());
+  }
+
+  /**
+   * #140 — fetch a page's RAW content via token handoff. Two steps: mint a
+   * short-lived signed `fetch_url` from the v1 API (JSON envelope — `request`
+   * maps any error envelope to SharedropApiError), then HTTP GET that URL (the
+   * token is in the URL, no auth header) and return the raw bytes as a Buffer.
+   * Distinct from `downloadPage`, which returns a zip of the whole artefact.
+   */
+  async fetchPage(pageId: string): Promise<Buffer> {
+    const mint = await this.request<{
+      fetch_url: string;
+      expires_at: string;
+      content_type: string;
+      mode: string;
+      size: number;
+    }>(`/api/v1/pages/${pageId}/fetch`);
+
+    const res = await fetch(mint.fetch_url);
+    if (!res.ok) {
+      throw new SharedropApiError(
+        "FETCH_FAILED",
+        `Failed to fetch page content (HTTP ${res.status})`,
+        res.status,
+      );
+    }
+    return Buffer.from(await res.arrayBuffer());
+  }
+
   async sharePage(pageId: string, email: string): Promise<V1ShareGrant> {
     return this.request<V1ShareGrant>(
       `/api/v1/pages/${pageId}/share`,

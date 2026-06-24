@@ -2,6 +2,8 @@ import { Command } from "commander";
 import { uploadCommand } from "./commands/upload.js";
 import { listCommand } from "./commands/list.js";
 import { getCommand } from "./commands/get.js";
+import { downloadCommand } from "./commands/download.js";
+import { fetchCommand } from "./commands/fetch.js";
 import { updateCommand } from "./commands/update.js";
 import { deleteCommand } from "./commands/delete.js";
 import { shareCommand } from "./commands/share.js";
@@ -55,6 +57,20 @@ program
   .description("Get a page by id, slug, or URL")
   .option("--json", "Force JSON output")
   .action((id, opts) => getCommand(id, opts, program.opts()));
+
+program
+  .command("download <id>")
+  .description("Download a page's artefact as a zip")
+  .option("-o, --output <path>", "Output file path ('-' for stdout)")
+  .option("--json", "Force JSON output")
+  .action((id, opts) => downloadCommand(id, opts, program.opts()));
+
+program
+  .command("fetch <id>")
+  .description("Fetch a page's raw content (prints to stdout by default)")
+  .option("-o, --output <path>", "Output file path ('-' for stdout)")
+  .option("--json", "Force JSON output")
+  .action((id, opts) => fetchCommand(id, opts, program.opts()));
 
 program
   .command("update <id> [file]")
