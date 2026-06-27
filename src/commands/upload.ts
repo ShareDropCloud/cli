@@ -447,7 +447,10 @@ export async function uploadCommand(
 
     try {
       const pipelineOpts = {
-        title: opts.title || (bundle ? undefined : defaultTitle(file)),
+        // Default the title from the filename only for a brand-new single file.
+        // On a re-upload (`--page-id`) send no title so the server keeps the page's
+        // existing title; bundles derive their title server-side too.
+        title: opts.title || (opts.pageId || bundle ? undefined : defaultTitle(file)),
         visibility: opts.visibility as "public" | "private" | "shared" | undefined,
         mode: opts.mode as "static" | "interactive" | undefined,
         workspace: opts.workspace,

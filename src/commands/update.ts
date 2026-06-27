@@ -4,7 +4,7 @@ import { normalizePageRef } from "../client/page-ref.js";
 import { resolveAuth, resolveBaseUrl } from "../auth/resolve.js";
 import { requireAuth, handleError, EXIT_CODES } from "../output/errors.js";
 import { formatPage, isTTY, shouldOutputJson } from "../output/format.js";
-import { defaultTitle, uploadFileStreamed } from "./upload.js";
+import { uploadFileStreamed } from "./upload.js";
 
 export async function updateCommand(
   id: string,
@@ -34,7 +34,10 @@ export async function updateCommand(
       // Re-upload via the streamed pipeline targeting the existing page_id.
       // The finalize endpoint accepts a `page_id` so the slug/URL stay stable.
       await uploadFileStreamed(client, file, {
-        title: opts.title || defaultTitle(file),
+        // No `--title` on an update means "keep the current title" — replacing
+        // content shouldn't rename the page. Sending the filename stem here forced
+        // a rename; leaving it undefined lets the server preserve the existing title.
+        title: opts.title,
         mode: opts.mode as "static" | "interactive" | undefined,
         pageId: ref,
       });
