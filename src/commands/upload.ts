@@ -28,6 +28,8 @@ const EXTENSION_TO_MIME: Record<string, string> = {
   md: "text/markdown",
   markdown: "text/markdown",
   pdf: "application/pdf",
+  json: "application/json",
+  jsonl: "application/jsonl",
   png: "image/png",
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
