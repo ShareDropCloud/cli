@@ -29,6 +29,8 @@ export interface SignUploadParams {
   content_type: string;
   size_bytes: number;
   workspace?: string;
+  /** Set on a re-upload; exempts the sign page-count cap (260703-pzs). */
+  page_id?: string;
 }
 
 export interface SignUploadResponse {
@@ -63,6 +65,8 @@ export interface FinalizeUploadResponse {
 export interface SignBundleParams {
   files: Array<{ filename: string; content_type: string; size_bytes: number }>;
   workspace?: string;
+  /** Set on a bundle re-upload; exempts the sign page-count cap (260703-pzs). */
+  page_id?: string;
 }
 
 export interface SignBundleResponse {

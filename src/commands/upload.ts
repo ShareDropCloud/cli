@@ -15,21 +15,33 @@ import { requireAuth, handleError } from "../output/errors.js";
 import { isTTY, shouldOutputJson } from "../output/format.js";
 
 /**
- * Subset of the filename→MIME map maintained in lib/uploads/types.ts.
- * Duplicated here because the CLI package is published as @sharedrop/cli and
- * cannot import from `@/lib/...` (Next.js app boundary). Keep aligned with
- * lib/uploads/types.ts:7-77.
+ * Filename→MIME map, kept aligned with `lib/uploads/types.ts` EXTENSION_TO_KIND
+ * (7-69). Duplicated because the CLI is published as @sharedrop/cli and cannot
+ * import from `@/lib/...` (Next.js app boundary).
+ *
+ * The server derives the page KIND from the extension (`detectKind`), so this
+ * value is informational — it becomes the `upload.sign` correlation log entry
+ * and the upload token's `mime` claim. We send the file's NATURAL, bare MIME
+ * (no `; charset` — the uploads Worker 415s on parameters). A complete map keeps
+ * uploads out of `application/octet-stream` and lets the CLI reject unsupported
+ * files before the PUT (see `isSupportedUpload`).
  */
 const EXTENSION_TO_MIME: Record<string, string> = {
+  // HTML
   html: "text/html",
   htm: "text/html",
+  // MHTML (single-file web archives)
   mhtml: "multipart/related",
   mht: "multipart/related",
+  // Markdown
   md: "text/markdown",
   markdown: "text/markdown",
+  // PDF
   pdf: "application/pdf",
+  // JSON / JSONL
   json: "application/json",
   jsonl: "application/jsonl",
+  // Images
   png: "image/png",
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
@@ -44,11 +56,57 @@ const EXTENSION_TO_MIME: Record<string, string> = {
   heif: "image/heif",
   tif: "image/tiff",
   tiff: "image/tiff",
+  // Video — Pro/Team only (v1 allow-list: mp4/webm/mov). Kind gate is server-side.
+  mp4: "video/mp4",
+  webm: "video/webm",
+  mov: "video/quicktime",
+  // Source code — rendered to syntax-highlighted HTML server-side (vj9). Free-tier.
+  js: "text/javascript", mjs: "text/javascript", cjs: "text/javascript",
+  jsx: "text/javascript", ts: "text/plain", tsx: "text/plain",
+  py: "text/plain", go: "text/plain", rs: "text/plain", rb: "text/plain",
+  java: "text/plain", c: "text/plain", cc: "text/plain", cpp: "text/plain",
+  h: "text/plain", hpp: "text/plain", cs: "text/plain", php: "text/plain",
+  swift: "text/plain", kt: "text/plain", kts: "text/plain",
+  sh: "text/plain", bash: "text/plain", zsh: "text/plain",
+  sql: "text/plain", yaml: "text/plain", yml: "text/plain",
+  toml: "text/plain", ini: "text/plain", jsonc: "text/plain",
+  css: "text/css", scss: "text/plain", less: "text/plain", xml: "application/xml",
+  // Plain text (vj9). Free-tier.
+  txt: "text/plain", log: "text/plain", text: "text/plain",
+  // Office documents (wxj) — doc (.docx) + sheet (.csv/.xlsx). Free-tier, v1.
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  csv: "text/csv",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 
+/**
+ * Skill files are detected by FILENAME, not extension (mirrors detectKind):
+ * `SKILL.md`, `*.skill.md`, `*.skill` → the "skill" kind.
+ */
+function isSkillFile(filename: string): boolean {
+  const b = basename(filename).toLowerCase();
+  return b === "skill.md" || b.endsWith(".skill.md") || b.endsWith(".skill");
+}
+
 function detectContentType(filename: string): string {
+  if (isSkillFile(filename)) return "text/markdown";
   const ext = extname(filename).replace(/^\./, "").toLowerCase();
   return EXTENSION_TO_MIME[ext] ?? "application/octet-stream";
+}
+
+/** Sorted list of supported single-file extensions, for error messages. */
+const SUPPORTED_EXTENSIONS = Object.keys(EXTENSION_TO_MIME).sort();
+
+/**
+ * True if the CLI recognises this filename as an uploadable single file.
+ * Mirrors `lib/uploads/types.ts` detectKind acceptance (extension map + skill
+ * filenames). Lets us reject unsupported files client-side before signing,
+ * instead of burning a PUT and failing at finalize with `unsupported_file_type`.
+ */
+export function isSupportedUpload(filename: string): boolean {
+  if (isSkillFile(filename)) return true;
+  const ext = extname(filename).replace(/^\./, "").toLowerCase();
+  return ext in EXTENSION_TO_MIME;
 }
 
 /**
@@ -205,16 +263,28 @@ export async function uploadFileStreamed(
     }
     size_bytes = stat.size;
     filename = basename(abs);
+    // Reject unsupported extensions client-side, before signing/PUT — otherwise
+    // the file streams to storage and only fails at finalize with
+    // `unsupported_file_type`, after burning bandwidth and quota checks.
+    if (!isSupportedUpload(filename)) {
+      throw new SharedropApiError(
+        "UNSUPPORTED_FILE_TYPE",
+        `Unsupported file type: ${filename}. Supported: ${SUPPORTED_EXTENSIONS.join(", ")}. (Upload a folder as an HTML bundle with \`sharedrop upload <folder>\`.)`,
+        400,
+      );
+    }
     content_type = detectContentType(filename);
     bodyStream = createReadStream(abs);
   }
 
-  // Step 1 — sign
+  // Step 1 — sign. On a re-upload (--page-id), pass page_id so sign exempts the
+  // page-count cap (260703-pzs); finalize re-checks the cap on its create branch.
   const signed = await client.signUpload({
     filename,
     content_type,
     size_bytes,
     workspace: options.workspace,
+    page_id: options.pageId,
   });
 
   // Step 2 — streaming PUT to the Worker
@@ -355,6 +425,8 @@ export async function uploadBundleStreamed(
   const { entries, skipped } = planBundleUpload(absDir, entry);
 
   // Step 1 — one batch sign for the whole manifest (single rate-limit charge).
+  // On a re-upload (--page-id), pass page_id so sign exempts the page-count cap
+  // (260703-pzs); bundle finalize re-checks the cap on its create branch.
   const signed = await client.signBundle({
     files: entries.map((e) => ({
       filename: basename(e.refPath),
@@ -362,6 +434,7 @@ export async function uploadBundleStreamed(
       size_bytes: e.size,
     })),
     workspace: options.workspace,
+    page_id: options.pageId,
   });
 
   // Step 2 — stream each file to its own signed Worker URL.
