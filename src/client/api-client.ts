@@ -48,6 +48,12 @@ export interface FinalizeUploadParams {
   mode?: "static" | "interactive";
   workspace?: string;
   page_id?: string;
+  /**
+   * #185 — destination folder for a NEW upload (snake_case; the finalize route
+   * validates it is an owned live folder and gates on Pro). Ignored by the
+   * server on a re-upload (page_id set), so the caller must not send it then.
+   */
+  folder_id?: string;
 }
 
 export interface FinalizeUploadResponse {
@@ -108,10 +114,66 @@ export class SharedropApiError extends Error {
     public status: number,
     /** Populated only when status === 402 and code ∈ BILLING_CODES. */
     public envelope?: BillingErrorEnvelope["error"],
+    /**
+     * #185 — the folder-delete 409 (`FOLDER_NOT_EMPTY`) carries the descendant
+     * counts so the command layer can print the refusal ("N page(s), M
+     * folder(s)") and prompt for --force. Additive; unused by other codes.
+     */
+    public details?: { pages: number; folders: number },
   ) {
     super(message);
     this.name = "SharedropApiError";
   }
+}
+
+// ─── #185 folder tree types (flat-body routes) ────────────────────────────
+//
+// The folder / trash / move / tree routes return FLAT JSON bodies, not the v1
+// { data } envelope. These local shapes describe just the fields the CLI reads.
+
+/** A folder node as returned by POST /api/folders ({ folder }). */
+export interface FolderNode {
+  id: string;
+  name: string;
+  title: string;
+  parentId: string | null;
+  path: string;
+  nodeType: string;
+  createdAt: string;
+}
+
+/**
+ * An owner-tree node from GET /api/tree/:username ({ pages }). Both folders and
+ * pages carry the flat nesting fields; only the ones the CLI filters/lists on
+ * are typed here (the serializer returns more).
+ */
+export interface OwnerNode {
+  id: string;
+  slug?: string;
+  title: string;
+  nodeType: "page" | "folder";
+  parentId: string | null;
+  path: string | null;
+  sortOrder?: number;
+  // Present on page rows (serializeOwnerPage). Optional so folder rows and older
+  // servers stay assignable; the list-in-folder path reads them when present.
+  mode?: string;
+  visibility?: string;
+  fileSize?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** A trashed row from GET /api/trash ({ items }). */
+export interface TrashItem {
+  id: string;
+  title: string;
+  nodeType: string;
+  parentId: string | null;
+  path: string;
+  deletedAt: string | null;
+  kind: string;
+  fileSize: number;
 }
 
 export class SharedropApiClient {
@@ -459,5 +521,125 @@ export class SharedropApiClient {
       );
     }
     return (await res.json()) as FinalizeBundleResponse;
+  }
+
+  // ─── #185 folder / trash / move methods (flat-body) ──────────────────────
+  //
+  // These hit the folder/trash/pages-move/tree routes, which return FLAT JSON
+  // bodies ({ folder }, { pages }, { items }, { success, ... }) and a flat error
+  // shape ({ error, code? }). They copy the signUpload/finalizeUpload direct-fetch
+  // spine and must NOT route through request/requestList (those unwrap `.data`).
+  // A non-OK body's `code` (e.g. FOLDERS_RESTRICTED) is preserved verbatim so the
+  // command layer surfaces the tier error rather than swallowing it.
+
+  private async folderFetch<T>(
+    path: string,
+    method: string,
+    body: unknown | undefined,
+    fallbackCode: string,
+  ): Promise<T> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method,
+      headers: {
+        "Authorization": `Bearer ${this.apiKey}`,
+        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+      },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+
+    if (!res.ok) {
+      const errBody = (await res.json().catch(() => ({}))) as {
+        error?: unknown;
+        code?: unknown;
+      };
+      const msg = typeof errBody.error === "string" ? errBody.error : res.statusText;
+      const code = typeof errBody.code === "string" ? errBody.code : fallbackCode;
+      throw new SharedropApiError(code, msg, res.status);
+    }
+
+    return (await res.json()) as T;
+  }
+
+  async createFolder(p: { name: string; parentId?: string | null }): Promise<{ folder: FolderNode }> {
+    return this.folderFetch(
+      "/api/folders",
+      "POST",
+      { name: p.name, parentId: p.parentId ?? null },
+      "FOLDER_CREATE_FAILED",
+    );
+  }
+
+  async listTree(username: string): Promise<{ pages: OwnerNode[] }> {
+    return this.folderFetch(
+      `/api/tree/${encodeURIComponent(username)}`,
+      "GET",
+      undefined,
+      "TREE_FETCH_FAILED",
+    );
+  }
+
+  async deleteFolder(
+    id: string,
+    force: boolean,
+  ): Promise<{ success: boolean; pages: number; folders: number }> {
+    const qs = force ? "?force=true" : "";
+    const res = await fetch(`${this.baseUrl}/api/folders/${id}${qs}`, {
+      method: "DELETE",
+      headers: { "Authorization": `Bearer ${this.apiKey}` },
+    });
+
+    // 409 = non-empty folder without --force. Carry the counts so the command
+    // can print the refusal and prompt for --force (parity with UI + MCP, D-A2).
+    if (res.status === 409) {
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: unknown;
+        pages?: unknown;
+        folders?: unknown;
+      };
+      const pages = typeof body.pages === "number" ? body.pages : 0;
+      const folders = typeof body.folders === "number" ? body.folders : 0;
+      const msg = typeof body.error === "string" ? body.error : "This folder is not empty.";
+      throw new SharedropApiError("FOLDER_NOT_EMPTY", msg, 409, undefined, { pages, folders });
+    }
+
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: unknown; code?: unknown };
+      const msg = typeof body.error === "string" ? body.error : res.statusText;
+      const code = typeof body.code === "string" ? body.code : "FOLDER_DELETE_FAILED";
+      throw new SharedropApiError(code, msg, res.status);
+    }
+
+    return (await res.json()) as { success: boolean; pages: number; folders: number };
+  }
+
+  async movePage(id: string, parentId: string | null): Promise<{ page: OwnerNode }> {
+    return this.folderFetch(`/api/pages/${id}`, "PUT", { parentId }, "MOVE_FAILED");
+  }
+
+  /**
+   * #191 — PATCH /api/folders/:id to rename ({ name }) and/or reparent
+   * ({ parentId }). Rename is not tier-gated; a reparent is (the server returns
+   * FOLDERS_RESTRICTED 403 on a free key). Any flat error code (404 not found,
+   * 400 cycle/depth, 409 duplicate sibling, FOLDERS_RESTRICTED) is preserved
+   * verbatim so the command layer can route it (parity with UI + MCP).
+   */
+  async updateFolder(
+    id: string,
+    patch: { name?: string; parentId?: string | null },
+  ): Promise<{ folder: FolderNode }> {
+    return this.folderFetch(`/api/folders/${id}`, "PATCH", patch, "FOLDER_UPDATE_FAILED");
+  }
+
+  async restoreNode(id: string): Promise<{ success: boolean; reparentedToRoot: boolean }> {
+    return this.folderFetch(
+      `/api/trash/${id}/restore`,
+      "POST",
+      undefined,
+      "RESTORE_FAILED",
+    );
+  }
+
+  async listTrash(): Promise<{ items: TrashItem[] }> {
+    return this.folderFetch("/api/trash", "GET", undefined, "TRASH_FETCH_FAILED");
   }
 }

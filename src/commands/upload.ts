@@ -13,6 +13,7 @@ import { SharedropApiClient, SharedropApiError } from "../client/api-client.js";
 import { resolveAuth, resolveBaseUrl } from "../auth/resolve.js";
 import { requireAuth, handleError } from "../output/errors.js";
 import { isTTY, shouldOutputJson } from "../output/format.js";
+import { resolveDestinationFolder } from "./folder.js";
 
 /**
  * Filename→MIME map, kept aligned with `lib/uploads/types.ts` EXTENSION_TO_KIND
@@ -209,6 +210,12 @@ interface PipelineOptions {
   mode?: "static" | "interactive";
   workspace?: string;
   pageId?: string;
+  /**
+   * #185 — resolved destination folder id for a NEW single-file upload. Threaded
+   * into finalize as snake_case folder_id, and only on a new upload (a re-upload
+   * with pageId never moves — the server ignores folder_id then).
+   */
+  folderId?: string;
 }
 
 /**
@@ -296,7 +303,8 @@ export async function uploadFileStreamed(
     size_bytes,
   );
 
-  // Step 3 — finalize
+  // Step 3 — finalize. Folder placement is new-upload-only: on a re-upload the
+  // server ignores folder_id, so we never send it with a page_id (#185, Pitfall 2).
   const result = await client.finalizeUpload({
     object_key: signed.object_key,
     upload_token: signed.upload_token,
@@ -305,6 +313,7 @@ export async function uploadFileStreamed(
     mode: options.mode,
     workspace: options.workspace,
     page_id: options.pageId,
+    ...(options.folderId && !options.pageId ? { folder_id: options.folderId } : {}),
   });
 
   return {
@@ -502,6 +511,7 @@ export async function uploadCommand(
     workspace?: string;
     pageId?: string;
     entry?: string;
+    folder?: string;
   },
   globalOpts: { url?: string; token?: string } = {},
 ): Promise<void> {
@@ -517,6 +527,20 @@ export async function uploadCommand(
     // the single-file streamed path.
     const bundle = file !== "-" && isDirectory(file);
 
+    // Resolve the destination folder up front (uuid used directly, else a path is
+    // walked/auto-created). Any error (notably FOLDERS_RESTRICTED) aborts the
+    // upload before any bytes stream, never a silent root fallback (#185, D-A3).
+    // Bundles land at your top level by contract (phase-22), so --folder is not
+    // applied to a folder upload; resolving it would create unused folders.
+    let folderId: string | undefined;
+    if (opts.folder && !bundle) {
+      folderId = await resolveDestinationFolder(client, opts.folder);
+    } else if (opts.folder && bundle && !shouldOutputJson(opts)) {
+      console.error(
+        "Note: folder uploads land at your top level; --folder is ignored for a folder bundle.",
+      );
+    }
+
     const useSpinner = isTTY() && !shouldOutputJson(opts);
     const spinner = useSpinner ? ora(replacing ? "Updating..." : "Uploading...").start() : null;
 
@@ -530,6 +554,7 @@ export async function uploadCommand(
         mode: opts.mode as "static" | "interactive" | undefined,
         workspace: opts.workspace,
         pageId: opts.pageId,
+        folderId,
       };
 
       let skipped: string[] = [];

@@ -1,6 +1,6 @@
 {
   "name": "@sharedrop/cli",
-  "version": "1.4.4",
+  "version": "1.6.0",
   "description": "Upload and manage HTML pages on sharedrop from the terminal",
   "license": "MIT",
   "author": "Scott Owen",

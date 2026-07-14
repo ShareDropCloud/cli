@@ -11,6 +11,15 @@ import { loginCommand } from "./commands/login.js";
 import { whoamiCommand } from "./commands/whoami.js";
 import { aboutCommand } from "./commands/about.js";
 import { searchCommand } from "./commands/search.js";
+import {
+  folderCreateCommand,
+  folderListCommand,
+  folderDeleteCommand,
+  folderRestoreCommand,
+  folderRenameCommand,
+  folderMoveCommand,
+} from "./commands/folder.js";
+import { moveCommand } from "./commands/move.js";
 
 const program = new Command()
   .name("sharedrop")
@@ -31,6 +40,7 @@ program
   .option("--entry <file>", "Entry HTML for a folder upload (relative to the folder)", "index.html")
   .option("--workspace <id>", "Upload to workspace")
   .option("--page-id <id>", "Replace an existing page's content (keeps the same URL) instead of creating a new page")
+  .option("--folder <id|path>", "Destination folder in your Sharedrop tree (creates path segments as needed)")
   .option("--json", "Force JSON output")
   .action((path, opts) => uploadCommand(path, opts, program.opts()));
 
@@ -40,6 +50,7 @@ program
   .option("--limit <n>", "Number of pages", "50")
   .option("--cursor <id>", "Pagination cursor")
   .option("--workspace <id>", "List workspace pages")
+  .option("--folder <id|path>", "List pages inside a folder in your Sharedrop tree (id or existing path)")
   .option("--json", "Force JSON output")
   .action((opts) => listCommand(opts, program.opts()));
 
@@ -88,6 +99,14 @@ program
   .action((id, opts) => deleteCommand(id, opts, program.opts()));
 
 program
+  .command("move <id>")
+  .description("Move a page into a folder or back to your top level")
+  .option("--folder <id|path>", "Destination folder in your Sharedrop tree (creates path segments as needed)")
+  .option("--root", "Move the page to your top level")
+  .option("--json", "Force JSON output")
+  .action((id, opts) => moveCommand(id, opts, program.opts()));
+
+program
   .command("share <id>")
   .description("Share a page with someone")
   .requiredOption("--email <email>", "Email address to share with")
@@ -108,6 +127,43 @@ program
   .description("Show account info")
   .option("--json", "Force JSON output")
   .action((opts) => whoamiCommand(opts, program.opts()));
+
+const folder = program.command("folder").description("Manage folders (Pro plan or higher)");
+folder
+  .command("create <path>")
+  .description("Create a folder (a slash path auto-creates missing segments)")
+  .option("--parent <id>", "Parent folder id (omit for root)")
+  .option("--json", "Force JSON output")
+  .action((path, opts) => folderCreateCommand(path, opts, program.opts()));
+folder
+  .command("list")
+  .description("List your folders")
+  .option("--parent <id>", "List children of this folder (omit for root)")
+  .option("--json", "Force JSON output")
+  .action((opts) => folderListCommand(opts, program.opts()));
+folder
+  .command("rename <id> <new-name>")
+  .description("Rename a folder")
+  .option("--json", "Force JSON output")
+  .action((id, newName, opts) => folderRenameCommand(id, newName, opts, program.opts()));
+folder
+  .command("move <id>")
+  .description("Move a folder to a new parent (or to your top level)")
+  .option("--parent <id>", "New parent folder id")
+  .option("--root", "Move to your top level")
+  .option("--json", "Force JSON output")
+  .action((id, opts) => folderMoveCommand(id, opts, program.opts()));
+folder
+  .command("delete <id>")
+  .description("Delete a folder (moves its contents to trash)")
+  .option("--force", "Delete even when the folder is not empty")
+  .option("--json", "Force JSON output")
+  .action((id, opts) => folderDeleteCommand(id, opts, program.opts()));
+folder
+  .command("restore <id>")
+  .description("Restore a folder or page from trash")
+  .option("--json", "Force JSON output")
+  .action((id, opts) => folderRestoreCommand(id, opts, program.opts()));
 
 program
   .command("about")

@@ -1,6 +1,7 @@
 import chalk from "chalk";
 import Table from "cli-table3";
 import type { V1Page, V1Pagination, V1ShareGrant, V1MeResponse } from "../client/types.js";
+import type { FolderNode } from "../client/api-client.js";
 
 export interface FormatOptions {
   json?: boolean;
@@ -83,6 +84,141 @@ export function formatDelete(pageTitle: string, opts: FormatOptions): string {
     return JSON.stringify({ success: true }, null, 2);
   }
   return chalk.dim(`Deleted "${pageTitle}"`);
+}
+
+// ─── #185 folder formatters ───────────────────────────────────────────────
+//
+// One flat row per folder: id, name, direct item count. All copy is em-dash
+// free (project rule). --json mode emits the structured object verbatim.
+
+/** A folder row shaped for the list table (direct-child count computed upstream). */
+export interface FolderListRow {
+  id: string;
+  name: string;
+  items: number;
+}
+
+export function formatFolderList(folders: FolderListRow[], opts: FormatOptions): string {
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify({ folders }, null, 2);
+  }
+
+  if (folders.length === 0) {
+    return chalk.dim("No folders found.");
+  }
+
+  const table = new Table({
+    head: ["ID", "Name", "Items"],
+    style: { head: ["cyan"] },
+  });
+
+  for (const f of folders) {
+    table.push([f.id, f.name, String(f.items)]);
+  }
+
+  return table.toString();
+}
+
+export function formatFolderCreated(folder: FolderNode, opts: FormatOptions): string {
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify({ folder }, null, 2);
+  }
+  return [chalk.bold(folder.name), chalk.dim(`  ID: ${folder.id}`)].join("\n");
+}
+
+/**
+ * #191 — a nested `folder create` whose whole path already existed. Idempotent:
+ * nothing was created, exit 0. Names the leaf id so the caller can act on it.
+ */
+export function formatFolderAlreadyExists(path: string, id: string, opts: FormatOptions): string {
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify({ folder: { id }, alreadyExists: true }, null, 2);
+  }
+  return chalk.dim(`Folder "${path}" already exists (${id}).`);
+}
+
+export function formatFolderRenamed(id: string, name: string, opts: FormatOptions): string {
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify({ success: true, id, name }, null, 2);
+  }
+  return chalk.green(`Renamed folder ${id} to "${name}".`);
+}
+
+export function formatFolderMoved(
+  id: string,
+  parentId: string | null,
+  opts: FormatOptions,
+): string {
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify({ success: true, id, parentId }, null, 2);
+  }
+  const where = parentId === null ? "your top level" : `folder ${parentId}`;
+  return chalk.green(`Moved folder ${id} to ${where}.`);
+}
+
+export function formatPageMoved(
+  id: string,
+  parentId: string | null,
+  opts: FormatOptions,
+): string {
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify({ success: true, id, parentId }, null, 2);
+  }
+  const where = parentId === null ? "your top level" : `folder ${parentId}`;
+  return chalk.green(`Moved page ${id} to ${where}.`);
+}
+
+export function formatFolderDeleted(
+  id: string,
+  res: { pages: number; folders: number },
+  opts: FormatOptions,
+): string {
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify({ success: true, pages: res.pages, folders: res.folders }, null, 2);
+  }
+  const pageLabel = `${res.pages} page${res.pages === 1 ? "" : "s"}`;
+  const folderLabel = `${res.folders} folder${res.folders === 1 ? "" : "s"}`;
+  return chalk.dim(`Deleted folder ${id}. Moved ${pageLabel} and ${folderLabel} to trash.`);
+}
+
+/**
+ * The non-forced delete refusal. Names the descendant counts and points at
+ * --force. Printed to stderr by the command, which then exits non-zero.
+ */
+export function formatFolderNotEmpty(
+  id: string,
+  details: { pages: number; folders: number } | undefined,
+  opts: FormatOptions,
+): string {
+  const pages = details?.pages ?? 0;
+  const folders = details?.folders ?? 0;
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify(
+      { error: { code: "FOLDER_NOT_EMPTY", pages, folders } },
+      null,
+      2,
+    );
+  }
+  const pageLabel = `${pages} page${pages === 1 ? "" : "s"}`;
+  const folderLabel = `${folders} folder${folders === 1 ? "" : "s"}`;
+  return chalk.red(
+    `Folder ${id} is not empty: it holds ${pageLabel} and ${folderLabel}. ` +
+      `Pass --force to move the whole subtree to trash.`,
+  );
+}
+
+export function formatRestore(
+  id: string,
+  res: { reparentedToRoot: boolean },
+  opts: FormatOptions,
+): string {
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify({ success: true, reparentedToRoot: res.reparentedToRoot }, null, 2);
+  }
+  const where = res.reparentedToRoot
+    ? " Its original parent is gone, so it now sits at your top level."
+    : "";
+  return chalk.green(`Restored ${id} from trash.${where}`);
 }
 
 export function formatWhoami(me: V1MeResponse, baseUrl: string, opts: FormatOptions): string {

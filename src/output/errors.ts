@@ -93,6 +93,15 @@ function renderEnvelope(env: BillingErrorEnvelope["error"]): string {
 export function handleError(error: unknown, opts: FormatOptions): never {
   if (error instanceof SharedropApiError) {
     const exitCode = statusToExitCode(error.status);
+    // #191 — free-tier folder commands (create / move) 403 with
+    // FOLDERS_RESTRICTED. Surface the server reason plus an upgrade link instead
+    // of a bare `Error:` line. JSON mode falls through to the structured branch
+    // so machine output stays { error: { code, message } }.
+    if (error.code === "FOLDERS_RESTRICTED" && !shouldOutputJson(opts)) {
+      console.error(error.message);
+      console.error(`Upgrade: ${chalk.cyan("https://sharedrop.cloud/pricing")}`);
+      process.exit(exitCode);
+    }
     if (error.envelope) {
       if (shouldOutputJson(opts)) {
         // --json mode: emit envelope verbatim under `error` key per D-20.
