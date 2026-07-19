@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import Table from "cli-table3";
-import type { V1Page, V1Pagination, V1ShareGrant, V1MeResponse } from "../client/types.js";
+import type { V1Page, V1Pagination, V1ShareGrant, V1MeResponse, Reservation } from "../client/types.js";
 import type { FolderNode } from "../client/api-client.js";
 
 export interface FormatOptions {
@@ -221,6 +221,81 @@ export function formatRestore(
   return chalk.green(`Restored ${id} from trash.${where}`);
 }
 
+// ─── #198 (RES-CLI-2) reservation formatters ──────────────────────────────
+//
+// All copy is em-dash free (project rule). The one-time claim token is printed
+// by formatReservationCreated exactly once with a store-now warning; no other
+// formatter has access to a token (the Reservation shape carries none), so a
+// list can never leak it.
+
+export function formatReservationCreated(
+  result: { reservation: Reservation; claim_token: string },
+  opts: FormatOptions,
+): string {
+  if (shouldOutputJson(opts)) {
+    // Raw one-time structure verbatim (reservation + sibling claim_token).
+    return JSON.stringify(result, null, 2);
+  }
+
+  const { reservation, claim_token } = result;
+  const lines = [
+    chalk.bold(reservation.title),
+    `  ${chalk.cyan(reservation.full_url)}`,
+    `  Status: ${reservation.status}`,
+  ];
+  if (reservation.intended_agent_name) {
+    lines.push(`  Agent:  ${reservation.intended_agent_name}`);
+  }
+  lines.push("");
+  lines.push(`  Claim token: ${chalk.yellow(claim_token)}`);
+  lines.push(
+    chalk.dim("  Store this token now. It is shown once and cannot be retrieved again."),
+  );
+  return lines.join("\n");
+}
+
+export function formatReservationList(
+  reservations: Reservation[],
+  pagination: V1Pagination,
+  opts: FormatOptions,
+): string {
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify({ data: reservations, pagination }, null, 2);
+  }
+
+  if (reservations.length === 0) {
+    return chalk.dim("No reservations found.");
+  }
+
+  const table = new Table({
+    head: ["Slug", "Status", "Agent", "URL", "Expires"],
+    style: { head: ["cyan"] },
+  });
+
+  for (const r of reservations) {
+    table.push([
+      r.slug,
+      r.status,
+      r.intended_agent_name ?? "",
+      chalk.cyan(r.full_url),
+      r.expires_at ? new Date(r.expires_at).toLocaleDateString() : "",
+    ]);
+  }
+
+  let output = table.toString();
+  if (pagination.has_more && pagination.next_cursor) {
+    output += "\n" + chalk.dim(`More reservations available. Use --cursor ${pagination.next_cursor}`);
+  }
+  return output;
+}
+
+export function formatReservationRevoked(reservation: Reservation, opts: FormatOptions): string {
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify({ data: reservation }, null, 2);
+  }
+  return chalk.green(`Revoked reservation "${reservation.slug}" (status: ${reservation.status}).`);
+}
+
 export function formatWhoami(me: V1MeResponse, baseUrl: string, opts: FormatOptions): string {
   if (shouldOutputJson(opts)) {
     return JSON.stringify({ data: me }, null, 2);
@@ -239,12 +314,25 @@ export function formatWhoami(me: V1MeResponse, baseUrl: string, opts: FormatOpti
     /* not a parseable URL — show the raw value */
   }
 
-  return [
+  const lines = [
     chalk.bold(me.username),
     `  Email:   ${me.email}`,
     `  Tier:    ${tierColor(me.tier)}`,
     `  Pages:   ${me.pages_used} / ${limitDisplay}`,
     `  Storage: ${storageDisplay}`,
     `  Host:    ${host}`,
-  ].join("\n");
+  ];
+
+  // #198 (RES-ME-1): reserved-addresses headroom, only when the server
+  // advertises it (older servers omit the field and render the prior output).
+  const reservations = me.entitlements?.reservations;
+  if (reservations) {
+    const reservedDisplay =
+      reservations.maxReservations === -1
+        ? "unlimited"
+        : `${reservations.remaining} of ${reservations.maxReservations} remaining`;
+    lines.push(`  Reserved: ${reservedDisplay}`);
+  }
+
+  return lines.join("\n");
 }

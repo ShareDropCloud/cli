@@ -18,6 +18,43 @@ export interface V1ShareGrant {
   created_at: string;
 }
 
+// ─── #198 (RES-CLI-1) reservations ────────────────────────────────────────
+//
+// Typed from serializeReservation (lib/pages/serializers.ts): the enveloped v1
+// shape returned by GET/POST /api/v1/reservations and the revoke route. status
+// is one of reserved | claimed | expired | revoked. claim_token is NOT part of
+// this shape — it is a one-time SIBLING field on the 201 create response only.
+
+export interface Reservation {
+  id: string;
+  slug: string;
+  title: string;
+  description: string | null;
+  intended_agent_name: string | null;
+  visibility: string;
+  mode: string;
+  watermark_enabled: boolean;
+  status: string;
+  claimed_page_id: string | null;
+  url: string;
+  full_url: string;
+  expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Only-provided keys are sent (snake_case, matching v1CreateReservationSchema). */
+export interface CreateReservationBody {
+  title?: string;
+  description?: string;
+  intended_agent_name?: string;
+  visibility?: "public" | "private" | "shared";
+  mode?: "static" | "interactive";
+  watermark_enabled?: boolean;
+  folder_id?: string;
+  expires_at?: string;
+}
+
 export interface V1Pagination {
   next_cursor: string | null;
   has_more: boolean;
@@ -121,6 +158,15 @@ export interface V1MeResponse {
     maxFileSizeBytes: number;
     allowedVisibilities: string[];
     maxVersionRetention: number;
+    // #185 — folders capability (catch-up for the shipped Phase 24 field).
+    folders?: boolean;
+    // #198 (RES-ME-1) — reserved-addresses capability. Optional so older
+    // servers that predate the field render exactly the prior whoami output.
+    reservations?: {
+      enabled: boolean;
+      maxReservations: number;
+      remaining: number;
+    };
   };
   storage?: { usedGb: number; capGb: number; addonGb: number };
   pricing?: PricingBlock;

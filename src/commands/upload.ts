@@ -14,6 +14,7 @@ import { resolveAuth, resolveBaseUrl } from "../auth/resolve.js";
 import { requireAuth, handleError } from "../output/errors.js";
 import { isTTY, shouldOutputJson } from "../output/format.js";
 import { resolveDestinationFolder } from "./folder.js";
+import { resolveReservationTarget } from "./reservation.js";
 
 /**
  * Filename→MIME map, kept aligned with `lib/uploads/types.ts` EXTENSION_TO_KIND
@@ -216,6 +217,13 @@ interface PipelineOptions {
    * with pageId never moves — the server ignores folder_id then).
    */
   folderId?: string;
+  /**
+   * #198: resolved reservation id for a NEW single-file upload claiming a
+   * reserved address. Threaded into signUpload as snake_case reservation_id (the
+   * claim rides the upload token); finalize is untouched. Mirrors the folderId
+   * new-upload-only precedent: a re-upload (pageId) never claims a reservation.
+   */
+  reservationId?: string;
 }
 
 /**
@@ -292,6 +300,9 @@ export async function uploadFileStreamed(
     size_bytes,
     workspace: options.workspace,
     page_id: options.pageId,
+    // #198: claim a reserved address on a new upload; the sign route binds the
+    // claim to the minted upload token, so finalize needs no reservation field.
+    ...(options.reservationId ? { reservation_id: options.reservationId } : {}),
   });
 
   // Step 2 — streaming PUT to the Worker
@@ -512,6 +523,7 @@ export async function uploadCommand(
     pageId?: string;
     entry?: string;
     folder?: string;
+    to?: string;
   },
   globalOpts: { url?: string; token?: string } = {},
 ): Promise<void> {
@@ -526,6 +538,37 @@ export async function uploadCommand(
     // A directory uploads as a multi-file bundle; "-" and plain files stay on
     // the single-file streamed path.
     const bundle = file !== "-" && isDirectory(file);
+
+    // #198: a reserved-address claim (--to) takes a single file and keeps the
+    // folder it was reserved with. Reject the two conflicting combinations before
+    // any bytes move, so a bad invocation fails fast (never a partial claim).
+    if (opts.to && bundle) {
+      throw new SharedropApiError(
+        "VALIDATION_ERROR",
+        "A reserved address takes a single file. Upload one file with --to, not a folder bundle.",
+        400,
+      );
+    }
+    if (opts.to && opts.folder) {
+      throw new SharedropApiError(
+        "VALIDATION_ERROR",
+        "The reserved address keeps the folder chosen when it was reserved. Pass the folder at reserve time instead of using --folder here.",
+        400,
+      );
+    }
+    if (opts.to && opts.pageId) {
+      throw new SharedropApiError(
+        "VALIDATION_ERROR",
+        "A reserved address claim always creates a new page. Use --to on its own, or --page-id on its own to replace an existing page.",
+        400,
+      );
+    }
+
+    // Resolve the reservation id up front (uuid used directly, else the caller's
+    // reserved slugs are listed and matched). Any error aborts before signing.
+    const reservationId = opts.to
+      ? await resolveReservationTarget(client, opts.to)
+      : undefined;
 
     // Resolve the destination folder up front (uuid used directly, else a path is
     // walked/auto-created). Any error (notably FOLDERS_RESTRICTED) aborts the
@@ -555,6 +598,7 @@ export async function uploadCommand(
         workspace: opts.workspace,
         pageId: opts.pageId,
         folderId,
+        reservationId,
       };
 
       let skipped: string[] = [];
@@ -569,6 +613,11 @@ export async function uploadCommand(
 
       if (spinner) spinner.succeed(replacing ? "Updated" : "Uploaded");
       console.log(formatUploadResult(result, baseUrl, opts));
+      // #198: confirm the claim landed on the reserved address (human mode only,
+      // so machine/JSON output stays the plain upload result).
+      if (reservationId && !shouldOutputJson(opts)) {
+        console.log("Your reserved address is now live at the URL above.");
+      }
       // Surface skipped non-serveable files so a missing asset isn't a silent
       // mystery (kept off stdout/JSON so it never pollutes machine output).
       if (skipped.length > 0 && !shouldOutputJson(opts)) {

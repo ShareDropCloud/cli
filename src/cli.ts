@@ -20,6 +20,11 @@ import {
   folderMoveCommand,
 } from "./commands/folder.js";
 import { moveCommand } from "./commands/move.js";
+import {
+  reserveCommand,
+  reservationsListCommand,
+  reservationsRevokeCommand,
+} from "./commands/reservation.js";
 
 const program = new Command()
   .name("sharedrop")
@@ -30,6 +35,7 @@ const program = new Command()
 
 program
   .command("upload <path>")
+  .alias("drop")
   .description(
     "Upload a file (use - for stdin) or a folder. Files: HTML, MHTML, Markdown, PDF, images. " +
       "A folder uploads as a multi-file bundle (entry HTML + relative css/js/image/font assets) — use --mode interactive to keep its JavaScript.",
@@ -41,6 +47,7 @@ program
   .option("--workspace <id>", "Upload to workspace")
   .option("--page-id <id>", "Replace an existing page's content (keeps the same URL) instead of creating a new page")
   .option("--folder <id|path>", "Destination folder in your Sharedrop tree (creates path segments as needed)")
+  .option("--to <slug|id>", "Claim a reserved address created with sharedrop reserve (single file uploads only)")
   .option("--json", "Force JSON output")
   .action((path, opts) => uploadCommand(path, opts, program.opts()));
 
@@ -164,6 +171,32 @@ folder
   .description("Restore a folder or page from trash")
   .option("--json", "Force JSON output")
   .action((id, opts) => folderRestoreCommand(id, opts, program.opts()));
+
+program
+  .command("reserve")
+  .description("Reserve a stable page address before the content exists")
+  .option("--title <title>", "Reservation title")
+  .option("--agent-name <name>", "Name of the agent expected to claim this address")
+  .option("--visibility <vis>", "Reserved visibility: public, private, shared")
+  .option("--expires <timestamp>", "Expiry as an ISO 8601 timestamp")
+  .option("--json", "Force JSON output")
+  .action((opts) => reserveCommand(opts, program.opts()));
+
+const reservations = program
+  .command("reservations")
+  .description("Manage reserved addresses");
+reservations
+  .command("list")
+  .description("List your reserved addresses")
+  .option("--limit <n>", "Number of results", "50")
+  .option("--cursor <id>", "Pagination cursor")
+  .option("--json", "Force JSON output")
+  .action((opts) => reservationsListCommand(opts, program.opts()));
+reservations
+  .command("revoke <id>")
+  .description("Revoke a reserved address")
+  .option("--json", "Force JSON output")
+  .action((id, opts) => reservationsRevokeCommand(id, opts, program.opts()));
 
 program
   .command("about")

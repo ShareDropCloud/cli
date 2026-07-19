@@ -3,6 +3,7 @@ import type {
   V1SuccessResponse, V1ListResponse, V1ErrorResponse,
   ListParams,
   BillingErrorEnvelope,
+  Reservation, CreateReservationBody,
 } from "./types.js";
 
 /**
@@ -31,6 +32,13 @@ export interface SignUploadParams {
   workspace?: string;
   /** Set on a re-upload; exempts the sign page-count cap (260703-pzs). */
   page_id?: string;
+  /**
+   * #198 (RES-ME-1) — claims a reserved address on a NEW upload. Mutually
+   * exclusive with page_id: the sign route rejects both together with
+   * reservation_claim_conflict. Flows into the sign body via JSON.stringify
+   * with no signUpload method change.
+   */
+  reservation_id?: string;
 }
 
 export interface SignUploadResponse {
@@ -344,6 +352,54 @@ export class SharedropApiClient {
 
   async getMe(): Promise<V1MeResponse> {
     return this.request<V1MeResponse>("/api/v1/me");
+  }
+
+  // ─── #198 (RES-CLI-1) reservation methods ─────────────────────────────
+  //
+  // The reservation routes are ENVELOPED v1 routes, so these go through the
+  // request/requestList spine (which unwraps `.data` and already normalises the
+  // v1 error envelope, billing codes included). They must NOT use the flat
+  // folderFetch spine, and add no custom error mapping: a 402 TIER_LIMIT on
+  // create surfaces with its BillingErrorEnvelope attached automatically.
+
+  /**
+   * Reserve a placeholder address. Only the provided keys ride the body (no
+   * explicit undefined fields). Resolves to the serialized reservation plus the
+   * one-time sdr_ claim_token sibling — the caller MUST surface the token once
+   * and never log it (it cannot be re-fetched).
+   */
+  async createReservation(
+    body: CreateReservationBody,
+  ): Promise<{ reservation: Reservation; claim_token: string }> {
+    const payload: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(body)) {
+      if (v !== undefined) payload[k] = v;
+    }
+    return this.request<{ reservation: Reservation; claim_token: string }>(
+      "/api/v1/reservations",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+    );
+  }
+
+  async listReservations(
+    params?: { cursor?: string; limit?: number },
+  ): Promise<{ data: Reservation[]; pagination: V1Pagination }> {
+    const qs = new URLSearchParams();
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.cursor) qs.set("cursor", params.cursor);
+    const s = qs.toString();
+    return this.requestList<Reservation>(`/api/v1/reservations${s ? `?${s}` : ""}`);
+  }
+
+  async revokeReservation(id: string): Promise<{ reservation: Reservation }> {
+    return this.request<{ reservation: Reservation }>(
+      `/api/v1/reservations/${id}/revoke`,
+      { method: "POST" },
+    );
   }
 
   // ─── UPLOAD-07: direct-streamed upload pipeline ───────────────────────
