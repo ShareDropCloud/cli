@@ -115,6 +115,62 @@ export interface FinalizeBundleResponse {
   was_reupload?: boolean;
 }
 
+// ─── #207 archive (large-artifact) multipart types ────────────────────────
+//
+// The archive control plane is the one-decision-point contract: POST create
+// returns a transport PLAN the client follows. Small archives ride the same
+// single sign->PUT->finalize path as a normal upload; large ones run presigned
+// multipart direct to R2. These wire shapes mirror app/api/archives/* verbatim.
+
+export interface ArchiveCreateParams {
+  filename: string;
+  size_bytes: number;
+  workspace?: string;
+  /** Resolved destination folder id (path -> id resolved client-side). */
+  folder_id?: string;
+  /** #198 — claims a reserved address; the claim itself fires at complete. */
+  reservation_id?: string;
+  /** #207 — store ANY file as a blob (skip the server's archive-extension check). */
+  as_archive?: boolean;
+}
+
+/** Small-archive plan: today's single Worker PUT + finalize (backward compatible). */
+export interface ArchiveSinglePlan {
+  transport: "single";
+  upload_url: string;
+  upload_token: string;
+  finalize_url: string;
+  object_key: string;
+}
+
+/** Large-archive plan: presigned multipart direct to R2. NO part URLs (front-load ban). */
+export interface ArchiveMultipartPlan {
+  transport: "multipart";
+  page_id: string;
+  upload_id: string;
+  part_size_bytes: number;
+  part_count: number;
+  sign_parts_url: string;
+  complete_url: string;
+  abort_url: string;
+  effective_cap_bytes?: number;
+}
+
+export type ArchiveCreatePlan = ArchiveSinglePlan | ArchiveMultipartPlan;
+
+export interface ArchiveSignPartsResult {
+  /** Fresh presigned UploadPart URLs for the requested (outstanding) parts. */
+  parts: Array<{ part_number: number; url: string }>;
+  /** Parts R2 already received (full list, drives resume). */
+  uploaded: Array<{ part_number: number; etag: string }>;
+  part_size_bytes: number;
+}
+
+export interface ArchiveCompleteResult {
+  page: { id: string; slug: string; kind: string; status: string; file_size: number };
+  download_url: string;
+}
+
 export class SharedropApiError extends Error {
   constructor(
     public code: string,
@@ -310,6 +366,55 @@ export class SharedropApiClient {
     }
 
     return Buffer.from(await res.arrayBuffer());
+  }
+
+  /**
+   * #207 — download an ARCHIVE-kind page's RAW bytes. GET /api/archives/:id/download
+   * responds 302 to a short-TTL presigned R2 GetObject URL (forced
+   * application/octet-stream + attachment). We follow the redirect with the
+   * DEFAULT redirect mode: undici (Node's fetch) strips the Authorization header
+   * on a cross-origin redirect per the fetch spec, so auto-following the 302 to
+   * the presigned R2 URL never leaks the sharedrop token, no manual-redirect
+   * dance needed. Distinct from downloadPage (which zips PAGES-bucket objects and
+   * 404s for an archive, since an archive has none).
+   *
+   * Errors here are FLAT ({ error: "Not found" } — error is a STRING), unlike the
+   * v1 envelope, so map both shapes into SharedropApiError.
+   */
+  /**
+   * #207 — open an archive download as a STREAM. The route 302-redirects to a
+   * presigned octet-stream R2 URL (fetch follows it); we return the OK Response so
+   * the caller can pipe `res.body` straight to disk. A 10 GB archive must never be
+   * buffered in memory (Fable #9), so this deliberately does NOT return a Buffer.
+   * Errors are decoded from the JSON body exactly as before.
+   */
+  async openArchiveDownload(pageId: string): Promise<Response> {
+    const res = await fetch(`${this.baseUrl}/api/archives/${pageId}/download`, {
+      headers: { "Authorization": `Bearer ${this.apiKey}` },
+    });
+
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: unknown;
+      };
+      const errField = body.error;
+      if (errField && typeof errField === "object" && "code" in errField) {
+        // v1-envelope shape ({ code, message }) — same handling as downloadPage.
+        const e = errField as { code: string; message: string };
+        throw new SharedropApiError(e.code, e.message, res.status);
+      }
+      // Flat shape ({ error: "string" }) — the archive route's default.
+      const msg = typeof errField === "string" ? errField : res.statusText;
+      const code =
+        res.status === 404
+          ? "NOT_FOUND"
+          : res.status === 429
+            ? "RATE_LIMIT_EXCEEDED"
+            : "UNKNOWN";
+      throw new SharedropApiError(code, msg, res.status);
+    }
+
+    return res;
   }
 
   /**
@@ -577,6 +682,130 @@ export class SharedropApiClient {
       );
     }
     return (await res.json()) as FinalizeBundleResponse;
+  }
+
+  // ─── #207 archive (large-artifact) multipart pipeline ─────────────────────
+  //
+  // create returns a transport PLAN; the sign-parts / complete / abort URLs it
+  // returns are ABSOLUTE (built from the request origin), so those three methods
+  // fetch the given URL directly rather than composing it from baseUrl. Part PUTs
+  // go to presigned R2 URLs with NO auth header (the URL is the capability) and
+  // NO Content-Type (the UploadPart presign signs only bucket/key/upload/part).
+
+  /**
+   * Normalise a non-OK archive control-plane response into SharedropApiError.
+   * Handles both the billing envelope ({ error: { code, message, ... } }) and
+   * the flat shape ({ error: "string", code?: "MULTIPART_IN_PROGRESS" }).
+   */
+  private async throwArchiveError(res: Response, fallbackCode: string): Promise<never> {
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: unknown;
+      code?: unknown;
+    };
+    const errField = body.error;
+    if (errField && typeof errField === "object" && "code" in errField) {
+      const e = errField as { code: string; message: string };
+      const envelope = BILLING_CODES.has(e.code)
+        ? (e as unknown as BillingErrorEnvelope["error"])
+        : undefined;
+      throw new SharedropApiError(e.code, e.message, res.status, envelope);
+    }
+    const msg = typeof errField === "string" ? errField : res.statusText;
+    const code = typeof body.code === "string" ? body.code : fallbackCode;
+    throw new SharedropApiError(code, msg, res.status);
+  }
+
+  async createArchive(params: ArchiveCreateParams): Promise<ArchiveCreatePlan> {
+    const res = await fetch(`${this.baseUrl}/api/archives/create`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) await this.throwArchiveError(res, "ARCHIVE_CREATE_FAILED");
+    return (await res.json()) as ArchiveCreatePlan;
+  }
+
+  async signArchiveParts(
+    signPartsUrl: string,
+    partNumbers?: number[],
+  ): Promise<ArchiveSignPartsResult> {
+    const res = await fetch(signPartsUrl, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(
+        partNumbers && partNumbers.length > 0 ? { part_numbers: partNumbers } : {},
+      ),
+    });
+    if (!res.ok) await this.throwArchiveError(res, "ARCHIVE_SIGN_PARTS_FAILED");
+    return (await res.json()) as ArchiveSignPartsResult;
+  }
+
+  /**
+   * PUT one part's byte range to its presigned R2 URL and return the ETag R2
+   * reports (verbatim, quotes included — CompleteMultipartUpload accepts it).
+   * No auth header and no Content-Type: the presigned URL is the capability and
+   * the UploadPart signature covers only bucket/key/upload-id/part-number.
+   */
+  async putArchivePart(
+    url: string,
+    body: import("node:stream").Readable,
+    contentLength: number,
+  ): Promise<string> {
+    const res = await fetch(url, {
+      method: "PUT",
+      // @ts-expect-error — `duplex` is required for a streamed body in Node 18.5+
+      // but missing from the lib.dom RequestInit typings TS picks up here.
+      duplex: "half",
+      headers: { "Content-Length": String(contentLength) },
+      body: body as unknown as BodyInit,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new SharedropApiError(
+        "PART_UPLOAD_FAILED",
+        `Part upload failed (HTTP ${res.status})${text ? `: ${text}` : ""}`,
+        res.status,
+      );
+    }
+    const etag = res.headers.get("etag");
+    if (!etag) {
+      throw new SharedropApiError(
+        "PART_UPLOAD_FAILED",
+        "Part upload succeeded but R2 returned no ETag.",
+        502,
+      );
+    }
+    return etag;
+  }
+
+  async completeArchive(
+    completeUrl: string,
+    parts: Array<{ part_number: number; etag: string }>,
+  ): Promise<ArchiveCompleteResult> {
+    const res = await fetch(completeUrl, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ parts }),
+    });
+    if (!res.ok) await this.throwArchiveError(res, "ARCHIVE_COMPLETE_FAILED");
+    return (await res.json()) as ArchiveCompleteResult;
+  }
+
+  async abortArchive(abortUrl: string): Promise<void> {
+    const res = await fetch(abortUrl, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${this.apiKey}` },
+    });
+    if (!res.ok) await this.throwArchiveError(res, "ARCHIVE_ABORT_FAILED");
   }
 
   // ─── #185 folder / trash / move methods (flat-body) ──────────────────────

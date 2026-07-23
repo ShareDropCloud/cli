@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { uploadCommand } from "./commands/upload.js";
+import { archiveCommand } from "./commands/archive.js";
 import { listCommand } from "./commands/list.js";
 import { getCommand } from "./commands/get.js";
 import { downloadCommand } from "./commands/download.js";
@@ -50,6 +51,22 @@ program
   .option("--to <slug|id>", "Claim a reserved address created with sharedrop reserve (single file uploads only)")
   .option("--json", "Force JSON output")
   .action((path, opts) => uploadCommand(path, opts, program.opts()));
+
+program
+  .command("archive <file>")
+  .description(
+    "Upload a large archive (zip, tar, gz, tgz, sql, sql.gz). Pro plan or higher. " +
+      "Counts against your storage quota. Download-only and private.",
+  )
+  .option("--title <title>", "Page title (auto-detected if omitted)")
+  .option("--folder <id|path>", "Destination folder in your Sharedrop tree (creates path segments as needed)")
+  .option("--workspace <id>", "Upload to workspace")
+  .option(
+    "--store-as-file",
+    "Store ANY file as a download-only blob, bypassing the archive-extension check (for a large non-archive file)",
+  )
+  .option("--json", "Force JSON output")
+  .action((file, opts) => archiveCommand(file, opts, program.opts()));
 
 program
   .command("list")

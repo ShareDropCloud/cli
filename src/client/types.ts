@@ -3,6 +3,9 @@ export interface V1Page {
   slug: string;
   title: string;
   mode: string;
+  // #207 — page kind (e.g. "archive", "html", "doc"). Optional: older servers
+  // omit it, in which case the CLI treats the page as the non-archive zip path.
+  kind?: string;
   file_size: number;
   visibility: string;
   url: string;
