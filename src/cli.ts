@@ -26,6 +26,7 @@ import {
   reservationsListCommand,
   reservationsRevokeCommand,
 } from "./commands/reservation.js";
+import { trashEmptyCommand } from "./commands/trash.js";
 
 const program = new Command()
   .name("sharedrop")
@@ -188,6 +189,13 @@ folder
   .description("Restore a folder or page from trash")
   .option("--json", "Force JSON output")
   .action((id, opts) => folderRestoreCommand(id, opts, program.opts()));
+
+const trash = program.command("trash").description("Manage trash");
+trash
+  .command("empty")
+  .description("Permanently delete every item in your trash")
+  .option("--json", "Force JSON output")
+  .action((opts) => trashEmptyCommand(opts, program.opts()));
 
 program
   .command("reserve")

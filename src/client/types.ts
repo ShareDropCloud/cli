@@ -134,6 +134,8 @@ export interface BillingErrorEnvelope {
     requiredTier?: "pro" | "team";
     /** Set only for STORAGE_LIMIT. */
     currentUsageGb?: number;
+    /** Set only for STORAGE_LIMIT when recoverable trash contributes to usage. */
+    trashedGb?: number;
     /** Set only for STORAGE_LIMIT. */
     capGb?: number;
     /** Set only for SEAT_LIMIT. */
@@ -147,6 +149,12 @@ export interface BillingErrorEnvelope {
     upgradeUrl: string;
     pricing: PricingBlock;
   };
+}
+
+export interface TrashEmptyResult {
+  success: boolean;
+  purged: number;
+  freedBytes: number;
 }
 
 export interface V1MeResponse {

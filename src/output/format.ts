@@ -1,6 +1,13 @@
 import chalk from "chalk";
 import Table from "cli-table3";
-import type { V1Page, V1Pagination, V1ShareGrant, V1MeResponse, Reservation } from "../client/types.js";
+import type {
+  V1Page,
+  V1Pagination,
+  V1ShareGrant,
+  V1MeResponse,
+  Reservation,
+  TrashEmptyResult,
+} from "../client/types.js";
 import type { FolderNode } from "../client/api-client.js";
 
 export interface FormatOptions {
@@ -219,6 +226,18 @@ export function formatRestore(
     ? " Its original parent is gone, so it now sits at your top level."
     : "";
   return chalk.green(`Restored ${id} from trash.${where}`);
+}
+
+export function formatTrashEmptied(
+  result: TrashEmptyResult,
+  freedSize: string,
+  opts: FormatOptions,
+): string {
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify(result, null, 2);
+  }
+  const itemLabel = `${result.purged} item${result.purged === 1 ? "" : "s"}`;
+  return chalk.green(`Emptied trash: ${itemLabel} purged, ${freedSize} freed.`);
 }
 
 // ─── #198 (RES-CLI-2) reservation formatters ──────────────────────────────

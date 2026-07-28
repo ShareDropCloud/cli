@@ -53,7 +53,13 @@ function renderEnvelope(env: BillingErrorEnvelope["error"]): string {
     const costLine = addon
       ? `Pro: $${env.pricing.pro.monthly}/mo · Pro + ${addon.blockGb} GB add-on: $${env.pricing.pro.monthly + addon.monthly}/mo`
       : `Pro: $${env.pricing.pro.monthly}/mo`;
-    return [headline, costLine, upgradeLine].join("\n");
+    const trashLine =
+      env.trashedGb !== undefined && env.trashedGb > 0
+        ? `Trash: ${env.trashedGb} GB. Empty trash to release it.`
+        : null;
+    return [headline, trashLine, costLine, upgradeLine]
+      .filter((line): line is string => line !== null)
+      .join("\n");
   }
 
   if (env.code === "FILE_SIZE_EXCEEDED") {

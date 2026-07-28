@@ -4,6 +4,7 @@ import type {
   ListParams,
   BillingErrorEnvelope,
   Reservation, CreateReservationBody,
+  TrashEmptyResult,
 } from "./types.js";
 
 /**
@@ -811,11 +812,11 @@ export class SharedropApiClient {
   // ─── #185 folder / trash / move methods (flat-body) ──────────────────────
   //
   // These hit the folder/trash/pages-move/tree routes, which return FLAT JSON
-  // bodies ({ folder }, { pages }, { items }, { success, ... }) and a flat error
-  // shape ({ error, code? }). They copy the signUpload/finalizeUpload direct-fetch
-  // spine and must NOT route through request/requestList (those unwrap `.data`).
-  // A non-OK body's `code` (e.g. FOLDERS_RESTRICTED) is preserved verbatim so the
-  // command layer surfaces the tier error rather than swallowing it.
+  // success bodies ({ folder }, { pages }, { items }, { success, ... }). Errors
+  // are usually flat ({ error, code? }), while restore can return a nested
+  // billing envelope. They must NOT route through request/requestList (those
+  // unwrap `.data`). Flat codes remain verbatim; allowlisted nested billing
+  // errors retain their whole envelope for terminal and JSON rendering.
 
   private async folderFetch<T>(
     path: string,
@@ -837,9 +838,25 @@ export class SharedropApiClient {
         error?: unknown;
         code?: unknown;
       };
-      const msg = typeof errBody.error === "string" ? errBody.error : res.statusText;
-      const code = typeof errBody.code === "string" ? errBody.code : fallbackCode;
-      throw new SharedropApiError(code, msg, res.status);
+      if (typeof errBody.error === "string") {
+        const code = typeof errBody.code === "string" ? errBody.code : fallbackCode;
+        throw new SharedropApiError(code, errBody.error, res.status);
+      }
+      if (
+        errBody.error &&
+        typeof errBody.error === "object" &&
+        !Array.isArray(errBody.error)
+      ) {
+        const nested = errBody.error as { code?: unknown; message?: unknown };
+        const code = typeof nested.code === "string" ? nested.code : fallbackCode;
+        const message =
+          typeof nested.message === "string" ? nested.message : res.statusText;
+        const envelope = BILLING_CODES.has(code)
+          ? (errBody.error as BillingErrorEnvelope["error"])
+          : undefined;
+        throw new SharedropApiError(code, message, res.status, envelope);
+      }
+      throw new SharedropApiError(fallbackCode, res.statusText, res.status);
     }
 
     return (await res.json()) as T;
@@ -926,5 +943,14 @@ export class SharedropApiClient {
 
   async listTrash(): Promise<{ items: TrashItem[] }> {
     return this.folderFetch("/api/trash", "GET", undefined, "TRASH_FETCH_FAILED");
+  }
+
+  async emptyTrash(): Promise<TrashEmptyResult> {
+    return this.folderFetch(
+      "/api/trash",
+      "DELETE",
+      undefined,
+      "TRASH_EMPTY_FAILED",
+    );
   }
 }
