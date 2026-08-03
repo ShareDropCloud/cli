@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { SharedropApiClient, SharedropApiError } from "../src/client/api-client.js";
 import { uploadFileStreamed } from "../src/commands/upload.js";
+import { handleError } from "../src/output/errors.js";
 
 function writeTmpFile(name: string, content: string): string {
   const dir = mkdtempSync(join(tmpdir(), "sharedrop-cli-test-"));
@@ -32,6 +33,7 @@ describe("sharedrop upload — three-step pipeline (UPLOAD-07)", () => {
   });
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("HTML happy path: sign → fetch PUT → finalize → returns share URL", async () => {
@@ -219,6 +221,211 @@ describe("sharedrop upload — three-step pipeline (UPLOAD-07)", () => {
       message: "too_large",
     });
     expect(finalizeSpy).not.toHaveBeenCalled();
+  });
+
+  it("re-signs the whole upload after a transient PUT failure and honours Retry-After", async () => {
+    const client = newClient();
+    const signSpy = vi
+      .spyOn(client, "signUpload")
+      .mockResolvedValueOnce({
+        upload_url: "https://uploads.example.com/first",
+        upload_token: "token-1",
+        finalize_url: "https://app.example.com/api/upload/finalize",
+        object_key: "key-1",
+      })
+      .mockResolvedValueOnce({
+        upload_url: "https://uploads.example.com/second",
+        upload_token: "token-2",
+        finalize_url: "https://app.example.com/api/upload/finalize",
+        object_key: "key-2",
+      });
+    const streamSpy = vi
+      .spyOn(client, "streamUpload")
+      .mockRejectedValueOnce(
+        new SharedropApiError(
+          "UPLOAD_FAILED",
+          "upload_failed",
+          500,
+          undefined,
+          undefined,
+          { reason: "storage unavailable", retryable: true, retryAfterMs: 2_000 },
+        ),
+      )
+      .mockResolvedValueOnce(undefined);
+    const finalizeSpy = vi.spyOn(client, "finalizeUpload").mockResolvedValue({
+      url: "/scotto/retried",
+      page_id: "p_retry",
+      slug: "retried",
+      visibility: "private",
+      mode: "static",
+      kind: "html",
+      contentType: "text/html",
+    });
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    const file = writeTmpFile("retry.html", "<p>retry</p>");
+    const result = await uploadFileStreamed(client, file, { sleep });
+
+    expect(result.page_id).toBe("p_retry");
+    expect(signSpy).toHaveBeenCalledTimes(2);
+    expect(streamSpy).toHaveBeenCalledTimes(2);
+    expect(streamSpy.mock.calls.map((call) => call[1])).toEqual(["token-1", "token-2"]);
+    expect(finalizeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ object_key: "key-2", upload_token: "token-2" }),
+    );
+    expect(sleep).toHaveBeenCalledWith(2_000);
+  });
+
+  it("does not retry an ambiguous finalize database 503", async () => {
+    const client = newClient();
+    const signSpy = vi.spyOn(client, "signUpload").mockResolvedValue({
+      upload_url: "https://uploads.example.com/key",
+      upload_token: "token",
+      finalize_url: "https://app.example.com/api/upload/finalize",
+      object_key: "key",
+    });
+    vi.spyOn(client, "streamUpload").mockResolvedValue(undefined);
+    const failure = new SharedropApiError(
+      "UPLOAD_FAILED",
+      "temporarily unavailable",
+      503,
+      undefined,
+      undefined,
+      {
+        reason: "database_unavailable",
+        requestId: "abcdef1234567890-SYD",
+        retryable: true,
+      },
+    );
+    const finalizeSpy = vi.spyOn(client, "finalizeUpload").mockRejectedValue(failure);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    const file = writeTmpFile("database-503.html", "<p>once</p>");
+    await expect(uploadFileStreamed(client, file, { sleep })).rejects.toBe(failure);
+    expect(signSpy).toHaveBeenCalledOnce();
+    expect(finalizeSpy).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("re-signs after the safe pre-commit finalize storage 503", async () => {
+    const client = newClient();
+    const signSpy = vi
+      .spyOn(client, "signUpload")
+      .mockResolvedValueOnce({
+        upload_url: "https://uploads.example.com/first",
+        upload_token: "token-1",
+        finalize_url: "https://app.example.com/api/upload/finalize",
+        object_key: "key-1",
+      })
+      .mockResolvedValueOnce({
+        upload_url: "https://uploads.example.com/second",
+        upload_token: "token-2",
+        finalize_url: "https://app.example.com/api/upload/finalize",
+        object_key: "key-2",
+      });
+    vi.spyOn(client, "streamUpload").mockResolvedValue(undefined);
+    const finalizeSpy = vi
+      .spyOn(client, "finalizeUpload")
+      .mockRejectedValueOnce(
+        new SharedropApiError(
+          "UPLOAD_FAILED",
+          "storage unavailable",
+          503,
+          undefined,
+          undefined,
+          { reason: "storage_unavailable", retryable: true },
+        ),
+      )
+      .mockResolvedValueOnce({
+        url: "/scotto/safe-retry",
+        page_id: "p_safe_retry",
+        slug: "safe-retry",
+        visibility: "private",
+        mode: "static",
+        kind: "html",
+        contentType: "text/html",
+      });
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    const file = writeTmpFile("storage-503.html", "<p>retry</p>");
+    await expect(uploadFileStreamed(client, file, { sleep })).resolves.toMatchObject({
+      page_id: "p_safe_retry",
+    });
+    expect(signSpy).toHaveBeenCalledTimes(2);
+    expect(finalizeSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a terminal 400 PUT response", async () => {
+    const client = newClient();
+    const signSpy = vi.spyOn(client, "signUpload").mockResolvedValue({
+      upload_url: "https://uploads.example.com/key",
+      upload_token: "token",
+      finalize_url: "https://app.example.com/api/upload/finalize",
+      object_key: "key",
+    });
+    vi.spyOn(client, "streamUpload").mockRejectedValue(
+      new SharedropApiError("UPLOAD_FAILED", "bad request", 400),
+    );
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    const file = writeTmpFile("bad.html", "<p>bad</p>");
+    await expect(uploadFileStreamed(client, file, { sleep })).rejects.toMatchObject({
+      status: 400,
+    });
+    expect(signSpy).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("surfaces Worker reason and request_id in the error and terminal output", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            error: "upload_failed",
+            reason: "R2 ServiceUnavailable 10043",
+            request_id: "ray-test-123",
+            retryable: true,
+          }),
+          { status: 503, headers: { "Retry-After": "3" } },
+        ),
+      ),
+    );
+    const client = newClient();
+    let caught: SharedropApiError | undefined;
+    try {
+      await client.streamUpload(
+        "https://uploads.example.com/key",
+        "token",
+        Readable.from("hello"),
+        "text/html",
+        5,
+      );
+    } catch (error) {
+      caught = error as SharedropApiError;
+    }
+
+    expect(caught?.response).toEqual({
+      reason: "R2 ServiceUnavailable 10043",
+      requestId: "ray-test-123",
+      retryable: true,
+      retryAfterMs: 3_000,
+    });
+
+    const originalIsTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`exit:${code}`);
+    });
+    expect(() => handleError(caught!, { json: false })).toThrow("exit:1");
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: originalIsTTY,
+      configurable: true,
+    });
+    const output = errorSpy.mock.calls.map(([line]) => String(line)).join("\n");
+    expect(output).toContain("Reason: R2 ServiceUnavailable 10043");
+    expect(output).toContain("Request ID: ray-test-123");
   });
 
   it("does NOT call the legacy direct-POST endpoint (/api/v1/pages)", async () => {

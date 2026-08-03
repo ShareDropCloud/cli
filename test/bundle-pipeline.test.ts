@@ -139,6 +139,125 @@ describe("sharedrop upload <dir> — bundle pipeline (#81)", () => {
     expect(out.skipped.sort()).toEqual([".DS_Store", "README.md"]);
   });
 
+  it("retries only a transiently failed bundle member with fresh coordinates", async () => {
+    const client = newClient();
+    const dir = makeSite({ "index.html": "<h1>retry</h1>" });
+    const signBundle = vi.spyOn(client, "signBundle").mockResolvedValue({
+      files: [
+        {
+          filename: "index.html",
+          upload_url: "https://up.example.com/old",
+          upload_token: "old-token",
+          object_key: "old-key",
+        },
+      ],
+      finalize_url: "https://app.example.com/api/upload/bundle/finalize",
+    });
+    const signUpload = vi.spyOn(client, "signUpload").mockResolvedValue({
+      upload_url: "https://up.example.com/fresh",
+      upload_token: "fresh-token",
+      finalize_url: "https://app.example.com/api/upload/finalize",
+      object_key: "fresh-key",
+    });
+    const streamUpload = vi
+      .spyOn(client, "streamUpload")
+      .mockRejectedValueOnce(
+        new SharedropApiError(
+          "UPLOAD_FAILED",
+          "upload_failed",
+          503,
+          undefined,
+          undefined,
+          { retryable: true },
+        ),
+      )
+      .mockResolvedValueOnce(undefined);
+    const finalize = vi.spyOn(client, "finalizeBundle").mockResolvedValue({
+      url: "/scotto/retried",
+      page_id: "page-retried",
+      slug: "retried",
+      visibility: "private",
+      mode: "interactive",
+      kind: "html",
+      assets: 0,
+    });
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    await uploadBundleStreamed(client, dir, "index.html", { sleep });
+
+    expect(signBundle).toHaveBeenCalledOnce();
+    expect(signUpload).toHaveBeenCalledOnce();
+    expect(streamUpload.mock.calls.map((call) => call[1])).toEqual([
+      "old-token",
+      "fresh-token",
+    ]);
+    expect(finalize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        files: [
+          expect.objectContaining({
+            object_key: "fresh-key",
+            upload_token: "fresh-token",
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("caps a bundle run at eight extra sign calls", async () => {
+    const client = newClient();
+    const dir = makeSite({
+      "index.html": "<h1>budget</h1>",
+      "asset-1.js": "1",
+      "asset-2.js": "2",
+      "asset-3.js": "3",
+      "asset-4.js": "4",
+      "asset-5.js": "5",
+      "asset-6.js": "6",
+      "asset-7.js": "7",
+      "asset-8.js": "8",
+    });
+    const files = Array.from({ length: 9 }, (_, i) => ({
+      filename: i === 0 ? "index.html" : `asset-${i}.js`,
+      upload_url: `https://up.example.com/batch-${i}`,
+      upload_token: `batch-${i}`,
+      object_key: `batch-key-${i}`,
+    }));
+    vi.spyOn(client, "signBundle").mockResolvedValue({
+      files,
+      finalize_url: "https://app.example.com/api/upload/bundle/finalize",
+    });
+    const signUpload = vi.spyOn(client, "signUpload").mockImplementation(async () => {
+      const i = signUpload.mock.calls.length;
+      return {
+        upload_url: `https://up.example.com/fresh-${i}`,
+        upload_token: `fresh-${i}`,
+        finalize_url: "https://app.example.com/api/upload/finalize",
+        object_key: `fresh-key-${i}`,
+      };
+    });
+    vi.spyOn(client, "streamUpload").mockImplementation(async (_url, token) => {
+      if (token.startsWith("batch-")) {
+        throw new SharedropApiError(
+          "UPLOAD_FAILED",
+          "transient",
+          503,
+          undefined,
+          undefined,
+          { retryable: true },
+        );
+      }
+    });
+    const finalize = vi.spyOn(client, "finalizeBundle");
+
+    await expect(
+      uploadBundleStreamed(client, dir, "index.html", {
+        sleep: vi.fn().mockResolvedValue(undefined),
+      }),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(signUpload).toHaveBeenCalledTimes(8);
+    expect(finalize).not.toHaveBeenCalled();
+  });
+
   it("directory without an entry HTML fails locally (no network)", async () => {
     const client = newClient();
     const dir = makeSite({ "styles.css": "body{}", "app.js": "1" });

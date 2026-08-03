@@ -116,9 +116,33 @@ export function handleError(error: unknown, opts: FormatOptions): never {
         console.error(renderEnvelope(error.envelope));
       }
     } else if (shouldOutputJson(opts)) {
-      console.error(JSON.stringify({ error: { code: error.code, message: error.message } }, null, 2));
+      console.error(
+        JSON.stringify(
+          {
+            error: {
+              code: error.code,
+              message: error.message,
+              ...(error.response?.reason ? { reason: error.response.reason } : {}),
+              ...(error.response?.requestId
+                ? { request_id: error.response.requestId }
+                : {}),
+              ...(error.response?.retryable !== undefined
+                ? { retryable: error.response.retryable }
+                : {}),
+            },
+          },
+          null,
+          2,
+        ),
+      );
     } else {
       console.error(chalk.red(`Error: ${error.message}`));
+      if (error.response?.reason && error.response.reason !== error.message) {
+        console.error(`Reason: ${error.response.reason}`);
+      }
+      if (error.response?.requestId) {
+        console.error(`Request ID: ${error.response.requestId}`);
+      }
     }
     process.exit(exitCode);
   }

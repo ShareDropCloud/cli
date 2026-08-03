@@ -205,7 +205,7 @@ export function defaultTitle(file: string): string | undefined {
   return basename(file, ext);
 }
 
-interface PipelineOptions {
+export interface PipelineOptions {
   title?: string;
   visibility?: "public" | "private" | "shared";
   mode?: "static" | "interactive";
@@ -224,6 +224,55 @@ interface PipelineOptions {
    * new-upload-only precedent: a re-upload (pageId) never claims a reservation.
    */
   reservationId?: string;
+  /** Backoff sleep injection for retry tests. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+const UPLOAD_MAX_ATTEMPTS = 4;
+const UPLOAD_BACKOFF_CAP_MS = 30_000;
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isNetworkFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code =
+    error && typeof error === "object" && "code" in error
+      ? String(error.code)
+      : "";
+  return (
+    error instanceof TypeError ||
+    /^(?:AbortError|TimeoutError|ECONNRESET|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|EPIPE|ETIMEDOUT)$/i.test(
+      error.name || code,
+    ) ||
+    /\b(?:fetch failed|network|socket|timed? out|timeout|connection (?:closed|refused|reset))\b/i.test(
+      error.message,
+    )
+  );
+}
+
+/** Retry an explicitly transient response, or a network-level failure during PUT. */
+export function isRetryableUploadFailure(
+  error: unknown,
+  stage: "sign" | "put" | "finalize",
+): boolean {
+  if (error instanceof SharedropApiError) {
+    if (stage === "finalize") {
+      return error.response?.reason === "storage_unavailable";
+    }
+    return error.status === 503 || error.response?.retryable === true;
+  }
+  return stage === "put" && isNetworkFailure(error);
+}
+
+function uploadRetryDelayMs(error: unknown, attempt: number): number {
+  const retryAfter =
+    error instanceof SharedropApiError ? error.response?.retryAfterMs : undefined;
+  return Math.min(
+    retryAfter ?? 2 ** (attempt - 1) * 1000,
+    UPLOAD_BACKOFF_CAP_MS,
+  );
 }
 
 /**
@@ -243,14 +292,14 @@ export async function uploadFileStreamed(
   filePath: string,
   options: PipelineOptions,
 ): Promise<{ url: string; title: string; page_id: string }> {
-  let bodyStream: Readable;
+  let createBodyStream: () => Readable;
   let size_bytes: number;
   let filename: string;
   let content_type: string;
 
   if (filePath === "-") {
     const buf = await readStdin();
-    bodyStream = Readable.from(buf);
+    createBodyStream = () => Readable.from(buf);
     size_bytes = buf.byteLength;
     filename = "stdin.html";
     content_type = "text/html";
@@ -289,49 +338,66 @@ export async function uploadFileStreamed(
       );
     }
     content_type = detectContentType(filename);
-    bodyStream = createReadStream(abs);
+    createBodyStream = () => createReadStream(abs);
   }
 
-  // Step 1 — sign. On a re-upload (--page-id), pass page_id so sign exempts the
-  // page-count cap (260703-pzs); finalize re-checks the cap on its create branch.
-  const signed = await client.signUpload({
-    filename,
-    content_type,
-    size_bytes,
-    workspace: options.workspace,
-    page_id: options.pageId,
-    // #198: claim a reserved address on a new upload; the sign route binds the
-    // claim to the minted upload token, so finalize needs no reservation field.
-    ...(options.reservationId ? { reservation_id: options.reservationId } : {}),
-  });
+  const sleep = options.sleep ?? defaultSleep;
+  let lastError: unknown;
 
-  // Step 2 — streaming PUT to the Worker
-  await client.streamUpload(
-    signed.upload_url,
-    signed.upload_token,
-    bodyStream,
-    content_type,
-    size_bytes,
-  );
+  // A Worker upload token is single-use and short-lived. Any transient failure
+  // replays the entire sign -> PUT -> finalize sequence with fresh coordinates
+  // and a fresh file stream, never the consumed token/body from the prior try.
+  for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
+    let stage: "sign" | "put" | "finalize" = "sign";
+    try {
+      const signed = await client.signUpload({
+        filename,
+        content_type,
+        size_bytes,
+        workspace: options.workspace,
+        page_id: options.pageId,
+        ...(options.reservationId ? { reservation_id: options.reservationId } : {}),
+      });
 
-  // Step 3 — finalize. Folder placement is new-upload-only: on a re-upload the
-  // server ignores folder_id, so we never send it with a page_id (#185, Pitfall 2).
-  const result = await client.finalizeUpload({
-    object_key: signed.object_key,
-    upload_token: signed.upload_token,
-    title: options.title,
-    visibility: options.visibility,
-    mode: options.mode,
-    workspace: options.workspace,
-    page_id: options.pageId,
-    ...(options.folderId && !options.pageId ? { folder_id: options.folderId } : {}),
-  });
+      stage = "put";
+      await client.streamUpload(
+        signed.upload_url,
+        signed.upload_token,
+        createBodyStream(),
+        content_type,
+        size_bytes,
+      );
 
-  return {
-    url: result.url,
-    title: options.title ?? filename,
-    page_id: result.page_id,
-  };
+      stage = "finalize";
+      const result = await client.finalizeUpload({
+        object_key: signed.object_key,
+        upload_token: signed.upload_token,
+        title: options.title,
+        visibility: options.visibility,
+        mode: options.mode,
+        workspace: options.workspace,
+        page_id: options.pageId,
+        ...(options.folderId && !options.pageId ? { folder_id: options.folderId } : {}),
+      });
+
+      return {
+        url: result.url,
+        title: options.title ?? filename,
+        page_id: result.page_id,
+      };
+    } catch (error) {
+      lastError = error;
+      if (
+        attempt === UPLOAD_MAX_ATTEMPTS ||
+        !isRetryableUploadFailure(error, stage)
+      ) {
+        throw error;
+      }
+      await sleep(uploadRetryDelayMs(error, attempt));
+    }
+  }
+
+  throw lastError;
 }
 
 // ── Folder / bundle upload (#81) ──────────────────────────────────────────
@@ -344,6 +410,8 @@ export async function uploadFileStreamed(
 
 /** A maximum that matches the server's MAX_BUNDLE_ASSETS (lib/uploads/bundle-path.ts). */
 const MAX_BUNDLE_ASSETS = 100;
+/** Bound pipeline-wide single-file re-signs below the server's 20/min sign limit. */
+const BUNDLE_RESIGN_BUDGET = 8;
 
 interface BundleEntry {
   /** Path as referenced in the entry HTML / sent to finalize. Root is "index.html". */
@@ -456,18 +524,56 @@ export async function uploadBundleStreamed(
     workspace: options.workspace,
     page_id: options.pageId,
   });
+  let resignCalls = 0;
 
   // Step 2 — stream each file to its own signed Worker URL.
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
-    const slot = signed.files[i];
-    await client.streamUpload(
-      slot.upload_url,
-      slot.upload_token,
-      createReadStream(e.abs),
-      e.contentType,
-      e.size,
-    );
+    let slot = signed.files[i];
+    let lastError: unknown;
+    const sleep = options.sleep ?? defaultSleep;
+
+    // Retry only the failed bundle member. The first try uses its batch-signed
+    // slot; every replay re-signs that one file and replaces its finalize token.
+    for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
+      let stage: "sign" | "put" | "finalize" = "put";
+      try {
+        if (attempt > 1) {
+          if (resignCalls >= BUNDLE_RESIGN_BUDGET) throw lastError;
+          resignCalls += 1;
+          stage = "sign";
+          const refreshed = await client.signUpload({
+            filename: basename(e.refPath),
+            content_type: e.contentType,
+            size_bytes: e.size,
+            workspace: options.workspace,
+            page_id: options.pageId,
+          });
+          slot = { filename: basename(e.refPath), ...refreshed };
+        }
+        stage = "put";
+        await client.streamUpload(
+          slot.upload_url,
+          slot.upload_token,
+          createReadStream(e.abs),
+          e.contentType,
+          e.size,
+        );
+        signed.files[i] = slot;
+        lastError = undefined;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (
+          attempt === UPLOAD_MAX_ATTEMPTS ||
+          !isRetryableUploadFailure(error, stage)
+        ) {
+          throw error;
+        }
+        await sleep(uploadRetryDelayMs(error, attempt));
+      }
+    }
+    if (lastError) throw lastError;
   }
 
   // Step 3 — finalize the bundle into one page.

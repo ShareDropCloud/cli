@@ -12,7 +12,7 @@ import { resolveAuth, resolveBaseUrl } from "../auth/resolve.js";
 import { requireAuth, handleError } from "../output/errors.js";
 import { isTTY, shouldOutputJson } from "../output/format.js";
 import { resolveDestinationFolder } from "./folder.js";
-import { defaultTitle } from "./upload.js";
+import { defaultTitle, isRetryableUploadFailure } from "./upload.js";
 
 // Re-export the plan types so the command + its tests import one archive module.
 export type { ArchiveSinglePlan, ArchiveMultipartPlan } from "../client/api-client.js";
@@ -47,7 +47,12 @@ export interface ArchiveResult {
 /** Injected transport + disk primitives so the multipart loop is unit-testable. */
 export interface ArchiveTransport {
   /** Single lane: PUT the whole file then finalize. Returns the created page. */
-  runSingle(plan: ArchiveSinglePlan): Promise<ArchiveResult>;
+  runSingle(
+    plan: ArchiveSinglePlan,
+    setStage: (stage: "put" | "finalize") => void,
+  ): Promise<ArchiveResult>;
+  /** Re-create a single-upload plan so a retry gets a fresh upload token. */
+  refreshSingle?(): Promise<ArchiveSinglePlan>;
   /** Mint fresh presigned UploadPart URLs for `partNumbers`. */
   signParts(
     signPartsUrl: string,
@@ -82,6 +87,7 @@ const SIGN_BATCH_SIZE = 20;
  */
 const PART_MAX_ATTEMPTS = 7;
 const PART_BACKOFF_CAP_MS = 30_000;
+const SINGLE_MAX_ATTEMPTS = 4;
 
 /**
  * Follow whichever plan the server returned. Single delegates to the single
@@ -93,9 +99,43 @@ export async function followArchivePlan(
   io: ArchiveTransport,
 ): Promise<ArchiveResult> {
   if (plan.transport === "single") {
-    return io.runSingle(plan);
+    return runSingleWithRetry(plan, io);
   }
   return runMultipartUpload(plan, totalBytes, io);
+}
+
+async function runSingleWithRetry(
+  initialPlan: ArchiveSinglePlan,
+  io: ArchiveTransport,
+): Promise<ArchiveResult> {
+  const sleep = io.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  let plan = initialPlan;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= SINGLE_MAX_ATTEMPTS; attempt++) {
+    let stage: "sign" | "put" | "finalize" = attempt > 1 ? "sign" : "put";
+    try {
+      if (attempt > 1) {
+        if (!io.refreshSingle) throw lastError;
+        plan = await io.refreshSingle();
+      }
+      stage = "put";
+      return await io.runSingle(plan, (nextStage) => {
+        stage = nextStage;
+      });
+    } catch (error) {
+      lastError = error;
+      if (
+        attempt === SINGLE_MAX_ATTEMPTS ||
+        !isRetryableUploadFailure(error, stage)
+      ) {
+        throw error;
+      }
+      await sleep(retryDelayMs(error, attempt, PART_BACKOFF_CAP_MS));
+    }
+  }
+
+  throw lastError;
 }
 
 async function runMultipartUpload(
@@ -171,13 +211,37 @@ async function uploadPartWithRetry(
       return await io.uploadPart(url, offset, length);
     } catch (err) {
       lastErr = err;
+      if (!isRetryablePartFailure(err)) throw err;
       if (attempt < PART_MAX_ATTEMPTS) {
         // 1s, 2s, 4s, 8s, 16s, 30s (capped) — survive a real outage, not just a hiccup.
-        await sleep(Math.min(2 ** (attempt - 1) * 1000, PART_BACKOFF_CAP_MS));
+        await sleep(retryDelayMs(err, attempt, PART_BACKOFF_CAP_MS));
       }
     }
   }
   throw lastErr;
+}
+
+function isRetryablePartFailure(error: unknown): boolean {
+  if (error instanceof SharedropApiError) {
+    return (
+      error.response?.retryable === true ||
+      error.status === 408 ||
+      error.status === 425 ||
+      error.status === 429 ||
+      error.status >= 500
+    );
+  }
+  return isRetryableUploadFailure(error, "put");
+}
+
+function retryDelayMs(
+  error: unknown,
+  attempt: number,
+  capMs: number,
+): number {
+  const retryAfter =
+    error instanceof SharedropApiError ? error.response?.retryAfterMs : undefined;
+  return Math.min(retryAfter ?? 2 ** (attempt - 1) * 1000, capMs);
 }
 
 // ─── GB-aware size formatting ──────────────────────────────────────────────
@@ -264,13 +328,14 @@ export async function archiveCommand(
       : undefined;
 
     // The one decision point: create returns the plan the client follows.
-    const plan = await client.createArchive({
+    const createParams = {
       filename,
       size_bytes: size,
       workspace: opts.workspace,
       folder_id: folderId,
       ...(opts.storeAsFile ? { as_archive: true } : {}),
-    });
+    };
+    const plan = await client.createArchive(createParams);
 
     // Best-effort abort on Ctrl-C during a multipart run so quota is released.
     let sigintHandler: (() => void) | undefined;
@@ -291,14 +356,34 @@ export async function archiveCommand(
 
     try {
       const io: ArchiveTransport = {
-        runSingle: async (p) => {
-          await client.streamUpload(
-            p.upload_url,
-            p.upload_token,
-            createReadStream(abs),
-            "application/octet-stream",
-            size,
-          );
+        runSingle: async (p, setStage) => {
+          setStage("put");
+          try {
+            await client.streamUpload(
+              p.upload_url,
+              p.upload_token,
+              createReadStream(abs),
+              "application/octet-stream",
+              size,
+            );
+          } catch (error) {
+            if (
+              !(error instanceof SharedropApiError) &&
+              isRetryableUploadFailure(error, "put")
+            ) {
+              const reason = error instanceof Error ? error.message : "network error";
+              throw new SharedropApiError(
+                "UPLOAD_FAILED",
+                reason,
+                0,
+                undefined,
+                undefined,
+                { reason, retryable: true },
+              );
+            }
+            throw error;
+          }
+          setStage("finalize");
           const r = await client.finalizeUpload({
             object_key: p.object_key,
             upload_token: p.upload_token,
@@ -306,6 +391,17 @@ export async function archiveCommand(
             ...(folderId ? { folder_id: folderId } : {}),
           });
           return { page_id: r.page_id, slug: r.slug };
+        },
+        refreshSingle: async () => {
+          const refreshed = await client.createArchive(createParams);
+          if (refreshed.transport !== "single") {
+            throw new SharedropApiError(
+              "ARCHIVE_PLAN_CHANGED",
+              "The server changed this archive from single to multipart during retry.",
+              500,
+            );
+          }
+          return refreshed;
         },
         signParts: (url, partNumbers) => client.signArchiveParts(url, partNumbers),
         uploadPart: (url, offset, length) =>

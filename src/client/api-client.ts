@@ -24,6 +24,56 @@ const BILLING_CODES = new Set([
   "FILE_SIZE_EXCEEDED",
 ]);
 
+// Control-plane JSON calls should not hang forever, but streamed uploads and
+// downloads may legitimately run for much longer. Every JSON fetch below gets a
+// fresh 60s connect-inclusive deadline; byte-streaming fetches intentionally do
+// not use this helper.
+const JSON_REQUEST_TIMEOUT_MS = 60_000;
+
+function jsonRequestSignal(signal?: AbortSignal | null): AbortSignal {
+  return signal ?? AbortSignal.timeout(JSON_REQUEST_TIMEOUT_MS);
+}
+
+export interface SharedropApiErrorResponse {
+  reason?: string;
+  requestId?: string;
+  retryable?: boolean;
+  retryAfterMs?: number;
+}
+
+function responseField(body: unknown, key: string): unknown {
+  if (!body || typeof body !== "object") return undefined;
+  const record = body as Record<string, unknown>;
+  if (record[key] !== undefined) return record[key];
+  const nested = record.error;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    return (nested as Record<string, unknown>)[key];
+  }
+  return undefined;
+}
+
+function parseRetryAfterMs(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const date = Date.parse(value);
+  return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
+}
+
+function errorResponseDetails(res: Response, body: unknown): SharedropApiErrorResponse {
+  const reason = responseField(body, "reason");
+  const requestId = responseField(body, "request_id");
+  const retryable = responseField(body, "retryable");
+  return {
+    ...(typeof reason === "string" ? { reason } : {}),
+    ...(typeof requestId === "string" ? { requestId } : {}),
+    ...(typeof retryable === "boolean" ? { retryable } : {}),
+    ...(parseRetryAfterMs(res.headers?.get?.("retry-after") ?? null) !== undefined
+      ? { retryAfterMs: parseRetryAfterMs(res.headers?.get?.("retry-after") ?? null) }
+      : {}),
+  };
+}
+
 // ─── UPLOAD-07 streamed-upload types ──────────────────────────────────────
 
 export interface SignUploadParams {
@@ -185,6 +235,8 @@ export class SharedropApiError extends Error {
      * folder(s)") and prompt for --force. Additive; unused by other codes.
      */
     public details?: { pages: number; folders: number },
+    /** Retry/correlation fields returned by the API or uploads Worker. */
+    public response?: SharedropApiErrorResponse,
   ) {
     super(message);
     this.name = "SharedropApiError";
@@ -254,6 +306,7 @@ export class SharedropApiClient {
     const url = `${this.baseUrl}${path}`;
     const res = await fetch(url, {
       ...options,
+      signal: jsonRequestSignal(options.signal),
       headers: {
         "Authorization": `Bearer ${this.apiKey}`,
         ...options.headers,
@@ -268,7 +321,14 @@ export class SharedropApiClient {
       const envelope = BILLING_CODES.has(error.code)
         ? (error as unknown as BillingErrorEnvelope["error"])
         : undefined;
-      throw new SharedropApiError(error.code, error.message, res.status, envelope);
+      throw new SharedropApiError(
+        error.code,
+        error.message,
+        res.status,
+        envelope,
+        undefined,
+        errorResponseDetails(res, body),
+      );
     }
 
     return (body as V1SuccessResponse<T>).data;
@@ -277,6 +337,7 @@ export class SharedropApiClient {
   private async requestList<T>(path: string): Promise<{ data: T[]; pagination: V1Pagination }> {
     const url = `${this.baseUrl}${path}`;
     const res = await fetch(url, {
+      signal: jsonRequestSignal(),
       headers: { "Authorization": `Bearer ${this.apiKey}` },
     });
 
@@ -288,7 +349,14 @@ export class SharedropApiClient {
       const envelope = BILLING_CODES.has(error.code)
         ? (error as unknown as BillingErrorEnvelope["error"])
         : undefined;
-      throw new SharedropApiError(error.code, error.message, res.status, envelope);
+      throw new SharedropApiError(
+        error.code,
+        error.message,
+        res.status,
+        envelope,
+        undefined,
+        errorResponseDetails(res, body),
+      );
     }
 
     const listBody = body as V1ListResponse<T>;
@@ -299,6 +367,7 @@ export class SharedropApiClient {
     const url = `${this.baseUrl}${path}`;
     const res = await fetch(url, {
       ...options,
+      signal: jsonRequestSignal(options.signal),
       headers: {
         "Authorization": `Bearer ${this.apiKey}`,
         ...options.headers,
@@ -311,7 +380,14 @@ export class SharedropApiClient {
       const envelope = BILLING_CODES.has(error.code)
         ? (error as unknown as BillingErrorEnvelope["error"])
         : undefined;
-      throw new SharedropApiError(error.code, error.message, res.status, envelope);
+      throw new SharedropApiError(
+        error.code,
+        error.message,
+        res.status,
+        envelope,
+        undefined,
+        errorResponseDetails(res, body),
+      );
     }
   }
 
@@ -523,6 +599,7 @@ export class SharedropApiClient {
     const url = `${this.baseUrl}/api/upload/sign`;
     const res = await fetch(url, {
       method: "POST",
+      signal: jsonRequestSignal(),
       headers: {
         "Authorization": `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
@@ -543,10 +620,24 @@ export class SharedropApiClient {
         const envelope = BILLING_CODES.has(e.code)
           ? (e as unknown as BillingErrorEnvelope["error"])
           : undefined;
-        throw new SharedropApiError(e.code, e.message, res.status, envelope);
+        throw new SharedropApiError(
+          e.code,
+          e.message,
+          res.status,
+          envelope,
+          undefined,
+          errorResponseDetails(res, body),
+        );
       }
       const msg = typeof errField === "string" ? errField : res.statusText;
-      throw new SharedropApiError("SIGN_FAILED", msg, res.status);
+      throw new SharedropApiError(
+        "SIGN_FAILED",
+        msg,
+        res.status,
+        undefined,
+        undefined,
+        errorResponseDetails(res, body),
+      );
     }
 
     return (await res.json()) as SignUploadResponse;
@@ -579,11 +670,18 @@ export class SharedropApiClient {
       // Worker returns JSON { error: "..." } on 4xx (size exceeded, mime
       // mismatch, etc.). Surface the reason verbatim.
       const body = await res.json().catch(() => ({ error: res.statusText }));
-      const reason =
+      const message =
         typeof (body as { error?: unknown }).error === "string"
           ? (body as { error: string }).error
           : res.statusText;
-      throw new SharedropApiError("UPLOAD_FAILED", reason, res.status);
+      throw new SharedropApiError(
+        "UPLOAD_FAILED",
+        message,
+        res.status,
+        undefined,
+        undefined,
+        errorResponseDetails(res, body),
+      );
     }
   }
 
@@ -593,6 +691,7 @@ export class SharedropApiClient {
     const url = `${this.baseUrl}/api/upload/finalize`;
     const res = await fetch(url, {
       method: "POST",
+      signal: jsonRequestSignal(),
       headers: {
         "Authorization": `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
@@ -610,12 +709,26 @@ export class SharedropApiClient {
         const envelope = BILLING_CODES.has(e.code)
           ? (e as unknown as BillingErrorEnvelope["error"])
           : undefined;
-        throw new SharedropApiError(e.code, e.message, res.status, envelope);
+        throw new SharedropApiError(
+          e.code,
+          e.message,
+          res.status,
+          envelope,
+          undefined,
+          errorResponseDetails(res, body),
+        );
       }
       const msg = typeof errField === "string" ? errField : res.statusText;
       // 401 from finalize = expired upload window — surface a distinct code.
       const code = res.status === 401 ? "TOKEN_EXPIRED" : "FINALIZE_FAILED";
-      throw new SharedropApiError(code, msg, res.status);
+      throw new SharedropApiError(
+        code,
+        msg,
+        res.status,
+        undefined,
+        undefined,
+        errorResponseDetails(res, body),
+      );
     }
 
     return (await res.json()) as FinalizeUploadResponse;
@@ -643,16 +756,31 @@ export class SharedropApiClient {
       const envelope = BILLING_CODES.has(e.code)
         ? (e as unknown as BillingErrorEnvelope["error"])
         : undefined;
-      throw new SharedropApiError(e.code, e.message, res.status, envelope);
+      throw new SharedropApiError(
+        e.code,
+        e.message,
+        res.status,
+        envelope,
+        undefined,
+        errorResponseDetails(res, body),
+      );
     }
     const msg = typeof errField === "string" ? errField : res.statusText;
-    throw new SharedropApiError(fallbackCode, msg, res.status);
+    throw new SharedropApiError(
+      fallbackCode,
+      msg,
+      res.status,
+      undefined,
+      undefined,
+      errorResponseDetails(res, body),
+    );
   }
 
   async signBundle(params: SignBundleParams): Promise<SignBundleResponse> {
     const url = `${this.baseUrl}/api/upload/bundle/sign`;
     const res = await fetch(url, {
       method: "POST",
+      signal: jsonRequestSignal(),
       headers: {
         "Authorization": `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
@@ -669,6 +797,7 @@ export class SharedropApiClient {
     const url = `${this.baseUrl}/api/upload/bundle/finalize`;
     const res = await fetch(url, {
       method: "POST",
+      signal: jsonRequestSignal(),
       headers: {
         "Authorization": `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
@@ -709,16 +838,31 @@ export class SharedropApiClient {
       const envelope = BILLING_CODES.has(e.code)
         ? (e as unknown as BillingErrorEnvelope["error"])
         : undefined;
-      throw new SharedropApiError(e.code, e.message, res.status, envelope);
+      throw new SharedropApiError(
+        e.code,
+        e.message,
+        res.status,
+        envelope,
+        undefined,
+        errorResponseDetails(res, body),
+      );
     }
     const msg = typeof errField === "string" ? errField : res.statusText;
     const code = typeof body.code === "string" ? body.code : fallbackCode;
-    throw new SharedropApiError(code, msg, res.status);
+    throw new SharedropApiError(
+      code,
+      msg,
+      res.status,
+      undefined,
+      undefined,
+      errorResponseDetails(res, body),
+    );
   }
 
   async createArchive(params: ArchiveCreateParams): Promise<ArchiveCreatePlan> {
     const res = await fetch(`${this.baseUrl}/api/archives/create`, {
       method: "POST",
+      signal: jsonRequestSignal(),
       headers: {
         "Authorization": `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
@@ -735,6 +879,7 @@ export class SharedropApiClient {
   ): Promise<ArchiveSignPartsResult> {
     const res = await fetch(signPartsUrl, {
       method: "POST",
+      signal: jsonRequestSignal(),
       headers: {
         "Authorization": `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
@@ -772,6 +917,9 @@ export class SharedropApiClient {
         "PART_UPLOAD_FAILED",
         `Part upload failed (HTTP ${res.status})${text ? `: ${text}` : ""}`,
         res.status,
+        undefined,
+        undefined,
+        errorResponseDetails(res, undefined),
       );
     }
     const etag = res.headers.get("etag");
@@ -791,6 +939,7 @@ export class SharedropApiClient {
   ): Promise<ArchiveCompleteResult> {
     const res = await fetch(completeUrl, {
       method: "POST",
+      signal: jsonRequestSignal(),
       headers: {
         "Authorization": `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
@@ -804,6 +953,7 @@ export class SharedropApiClient {
   async abortArchive(abortUrl: string): Promise<void> {
     const res = await fetch(abortUrl, {
       method: "POST",
+      signal: jsonRequestSignal(),
       headers: { "Authorization": `Bearer ${this.apiKey}` },
     });
     if (!res.ok) await this.throwArchiveError(res, "ARCHIVE_ABORT_FAILED");
@@ -826,6 +976,7 @@ export class SharedropApiClient {
   ): Promise<T> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method,
+      signal: jsonRequestSignal(),
       headers: {
         "Authorization": `Bearer ${this.apiKey}`,
         ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
@@ -840,7 +991,14 @@ export class SharedropApiClient {
       };
       if (typeof errBody.error === "string") {
         const code = typeof errBody.code === "string" ? errBody.code : fallbackCode;
-        throw new SharedropApiError(code, errBody.error, res.status);
+        throw new SharedropApiError(
+          code,
+          errBody.error,
+          res.status,
+          undefined,
+          undefined,
+          errorResponseDetails(res, errBody),
+        );
       }
       if (
         errBody.error &&
@@ -854,7 +1012,14 @@ export class SharedropApiClient {
         const envelope = BILLING_CODES.has(code)
           ? (errBody.error as BillingErrorEnvelope["error"])
           : undefined;
-        throw new SharedropApiError(code, message, res.status, envelope);
+        throw new SharedropApiError(
+          code,
+          message,
+          res.status,
+          envelope,
+          undefined,
+          errorResponseDetails(res, errBody),
+        );
       }
       throw new SharedropApiError(fallbackCode, res.statusText, res.status);
     }
@@ -887,6 +1052,7 @@ export class SharedropApiClient {
     const qs = force ? "?force=true" : "";
     const res = await fetch(`${this.baseUrl}/api/folders/${id}${qs}`, {
       method: "DELETE",
+      signal: jsonRequestSignal(),
       headers: { "Authorization": `Bearer ${this.apiKey}` },
     });
 
