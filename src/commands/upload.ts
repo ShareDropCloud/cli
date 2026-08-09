@@ -58,10 +58,11 @@ const EXTENSION_TO_MIME: Record<string, string> = {
   heif: "image/heif",
   tif: "image/tiff",
   tiff: "image/tiff",
-  // Video — Pro/Team only (v1 allow-list: mp4/webm/mov). Kind gate is server-side.
+  // Video — Pro/Team only (allow-list: mp4/webm/mov/m4v). Kind gate is server-side.
   mp4: "video/mp4",
   webm: "video/webm",
   mov: "video/quicktime",
+  m4v: "video/mp4",
   // Source code — rendered to syntax-highlighted HTML server-side (vj9). Free-tier.
   js: "text/javascript", mjs: "text/javascript", cjs: "text/javascript",
   jsx: "text/javascript", ts: "text/plain", tsx: "text/plain",
