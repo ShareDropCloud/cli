@@ -9,15 +9,15 @@ import { uploadFileStreamed } from "./upload.js";
 export async function updateCommand(
   id: string,
   file: string | undefined,
-  opts: { title?: string; visibility?: string; mode?: string; json?: boolean },
+  opts: { title?: string; slug?: string; visibility?: string; mode?: string; json?: boolean },
   globalOpts: { url?: string; token?: string } = {},
 ): Promise<void> {
   try {
-    if (!file && !opts.title && !opts.visibility) {
+    if (!file && !opts.title && !opts.slug && !opts.visibility) {
       if (shouldOutputJson(opts)) {
-        console.error(JSON.stringify({ error: { code: "VALIDATION_ERROR", message: "Nothing to update. Provide a file to replace content, or --title / --visibility." } }, null, 2));
+        console.error(JSON.stringify({ error: { code: "VALIDATION_ERROR", message: "Nothing to update. Provide a file to replace content, or --title / --slug / --visibility." } }, null, 2));
       } else {
-        console.error(chalk.red("Nothing to update. Provide a file to replace content, or --title / --visibility."));
+        console.error(chalk.red("Nothing to update. Provide a file to replace content, or --title / --slug / --visibility."));
       }
       process.exit(EXIT_CODES.VALIDATION_ERROR);
     }
@@ -43,12 +43,16 @@ export async function updateCommand(
       });
       // Pull the latest page row for display + optional visibility update.
       page = await client.getPage(ref);
-      if (opts.visibility) {
-        page = await client.updatePage(ref, { visibility: opts.visibility });
+      if (opts.slug || opts.visibility) {
+        page = await client.updatePage(ref, {
+          ...(opts.slug ? { slug: opts.slug } : {}),
+          ...(opts.visibility ? { visibility: opts.visibility } : {}),
+        });
       }
     } else {
-      const updates: { title?: string; visibility?: string } = {};
+      const updates: { title?: string; slug?: string; visibility?: string } = {};
       if (opts.title) updates.title = opts.title;
+      if (opts.slug) updates.slug = opts.slug;
       if (opts.visibility) updates.visibility = opts.visibility;
       page = await client.updatePage(ref, updates);
     }

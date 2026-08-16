@@ -112,6 +112,7 @@ program
   .command("update <id> [file]")
   .description("Update a page: pass a file to replace its content (keeps the same URL), and/or set metadata")
   .option("--title <title>", "New title")
+  .option("--slug <slug>", "New readable address (Pro, public pages only). The old address redirects.")
   .option("--visibility <vis>", "New visibility: public, private, shared")
   .option("--mode <mode>", "Page mode when replacing content: static, interactive")
   .option("--json", "Force JSON output")
@@ -200,6 +201,7 @@ trash
 program
   .command("reserve")
   .description("Reserve a stable page address before the content exists")
+  .option("--slug <slug>", "Optional readable address for the reserved public page.")
   .option("--title <title>", "Reservation title")
   .option("--agent-name <name>", "Name of the agent expected to claim this address")
   .option("--visibility <vis>", "Reserved visibility: public, private, shared")

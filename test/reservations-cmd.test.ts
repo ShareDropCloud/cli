@@ -82,14 +82,15 @@ describe("reserveCommand — create + one-time token reveal", () => {
     silenceLog();
 
     await reserveCommand(
-      { title: "Weekly metrics", agentName: "metrics-bot", visibility: "private", json: true },
+      { slug: "weekly-metrics", title: "Weekly metrics", agentName: "metrics-bot", visibility: "public", json: true },
       {},
     );
 
     expect(create).toHaveBeenCalledWith({
+      slug: "weekly-metrics",
       title: "Weekly metrics",
       intended_agent_name: "metrics-bot",
-      visibility: "private",
+      visibility: "public",
     });
   });
 

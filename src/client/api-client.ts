@@ -406,7 +406,7 @@ export class SharedropApiClient {
     return this.request<V1Page>(`/api/v1/pages/${pageId}`);
   }
 
-  async updatePage(pageId: string, updates: { title?: string; visibility?: string }): Promise<V1Page> {
+  async updatePage(pageId: string, updates: { title?: string; slug?: string; visibility?: string }): Promise<V1Page> {
     return this.request<V1Page>(
       `/api/v1/pages/${pageId}`,
       {

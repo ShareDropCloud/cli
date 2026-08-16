@@ -80,6 +80,7 @@ sharedrop get <ref>         # Show page details — ref is an id, slug, or URL
 sharedrop fetch <ref>       # Pull a page's RAW content (stdout by default, or -o file)
 sharedrop download <ref>    # Download a page's full artefact as a ZIP (root + all assets)
 sharedrop update <ref> [file]  # Re-upload content (same URL, new version) and/or update title/visibility
+sharedrop reserve [options] # Reserve an address before the first upload
 sharedrop delete <ref>      # Delete a page
 sharedrop share <ref> --email someone@example.com   # Share with a person
 sharedrop login             # Browser sign-in (persists locally)
@@ -140,8 +141,12 @@ sharedrop get 4knxz9                              # by slug
 sharedrop get https://sharedrop.cloud/you/4knxz9  # by URL
 sharedrop update 4knxz9 report.html               # replace content — same URL, version recorded
 sharedrop update 4knxz9 --title "New title" --visibility shared
+sharedrop update 4knxz9 --slug quarterly-report   # Pro public page custom address
+sharedrop reserve --visibility public --slug quarterly-report  # reserve a readable public address
 sharedrop delete 4knxz9
 ```
+
+`--slug <address>` on `update` renames a public Pro page. The same option on `reserve` pre-claims a readable address for a public Pro reservation.
 
 ### fetch
 

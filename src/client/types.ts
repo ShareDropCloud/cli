@@ -48,6 +48,7 @@ export interface Reservation {
 
 /** Only-provided keys are sent (snake_case, matching v1CreateReservationSchema). */
 export interface CreateReservationBody {
+  slug?: string;
   title?: string;
   description?: string;
   intended_agent_name?: string;

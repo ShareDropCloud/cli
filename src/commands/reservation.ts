@@ -61,6 +61,7 @@ export async function resolveReservationTarget(
 
 export async function reserveCommand(
   opts: {
+    slug?: string;
     title?: string;
     agentName?: string;
     visibility?: string;
@@ -74,6 +75,7 @@ export async function reserveCommand(
     // Map flags to the snake_case create body; the server validates visibility,
     // the expiry timestamp, and the tier cap. Only-provided keys are sent.
     const body: CreateReservationBody = {
+      slug: opts.slug,
       title: opts.title,
       intended_agent_name: opts.agentName,
       visibility: opts.visibility as "public" | "private" | "shared" | undefined,
