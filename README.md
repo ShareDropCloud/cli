@@ -221,6 +221,20 @@ sharedrop share "$PAGE" --email alice@example.com --json
 sharedrop delete "$PAGE" --json
 ```
 
+## Custom domains
+
+If your account has a live custom domain, the CLI prints the branded address for any page eligible
+for it. `upload`, `list`, `get` and `reservations` show
+`https://share.yourcompany.com/yourhandle/abc123` instead of the `sharedrop.cloud` address, and
+`--json` carries the same value in `full_url`.
+
+Only public and shared pages are eligible. Private pages and archives keep their `sharedrop.cloud`
+address. Custom domains are subdomains only: a `share` and a `view` subdomain, each with a CNAME
+record plus a TXT record for pre-validation, and on a Cloudflare-proxied zone both CNAMEs must be
+DNS only. The CLI keeps talking to `sharedrop.cloud`; only the recipient URL is branded.
+
+Full setup guide: https://sharedrop.cloud/docs/custom-domains
+
 ## Configuration
 
 | Variable | Purpose |

@@ -115,14 +115,26 @@ export interface FinalizeUploadParams {
   folder_id?: string;
 }
 
+export interface SanitiserWarning {
+  code: "removed_tag" | "removed_attribute";
+  detail: string;
+  count: number;
+  message: string;
+}
+
 export interface FinalizeUploadResponse {
   url: string;
+  /** #271 — absolute recipient URL from the server: the owner's branded share
+   *  hostname when they have a live custom domain and the page is eligible,
+   *  otherwise the standard Sharedrop address. Older servers omit it. */
+  full_url?: string;
   page_id: string;
   slug: string;
   visibility: string;
   mode: string;
   kind: string;
   contentType: string;
+  sanitiser_warnings?: SanitiserWarning[];
 }
 
 // ─── Bundle (folder) upload types — Epic 2 / #81, #90 ─────────────────────
@@ -157,6 +169,9 @@ export interface FinalizeBundleParams {
 
 export interface FinalizeBundleResponse {
   url: string;
+  /** #271 — absolute recipient URL from the server (branded when the owner has
+   *  a live custom domain). Older servers omit it. */
+  full_url?: string;
   page_id: string;
   slug: string;
   visibility: string;
@@ -164,6 +179,7 @@ export interface FinalizeBundleResponse {
   kind: string;
   assets: number;
   was_reupload?: boolean;
+  sanitiser_warnings?: SanitiserWarning[];
 }
 
 // ─── #207 archive (large-artifact) multipart types ────────────────────────
@@ -277,6 +293,10 @@ export interface OwnerNode {
   mode?: string;
   visibility?: string;
   fileSize?: number;
+  // #271 — the recipient-facing URL the server built for this page. Branded when
+  // the owner has a live custom domain and the page is eligible, standard
+  // otherwise. Optional so folder rows and older servers stay assignable.
+  fullUrl?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }

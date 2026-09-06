@@ -9,7 +9,11 @@ import {
   sep,
 } from "node:path";
 import ora from "ora";
-import { SharedropApiClient, SharedropApiError } from "../client/api-client.js";
+import {
+  SharedropApiClient,
+  SharedropApiError,
+  type SanitiserWarning,
+} from "../client/api-client.js";
 import { resolveAuth, resolveBaseUrl } from "../auth/resolve.js";
 import { requireAuth, handleError } from "../output/errors.js";
 import { isTTY, shouldOutputJson } from "../output/format.js";
@@ -292,7 +296,12 @@ export async function uploadFileStreamed(
   client: SharedropApiClient,
   filePath: string,
   options: PipelineOptions,
-): Promise<{ url: string; title: string; page_id: string }> {
+): Promise<{
+  url: string;
+  title: string;
+  page_id: string;
+  sanitiser_warnings?: SanitiserWarning[];
+}> {
   let createBodyStream: () => Readable;
   let size_bytes: number;
   let filename: string;
@@ -383,8 +392,14 @@ export async function uploadFileStreamed(
 
       return {
         url: result.url,
+        // #271 — the server's recipient URL (branded when the owner has a live
+        // custom domain) travels with the result to the formatter.
+        ...(result.full_url ? { full_url: result.full_url } : {}),
         title: options.title ?? filename,
         page_id: result.page_id,
+        ...(result.sanitiser_warnings?.length
+          ? { sanitiser_warnings: result.sanitiser_warnings }
+          : {}),
       };
     } catch (error) {
       lastError = error;
@@ -509,7 +524,13 @@ export async function uploadBundleStreamed(
   dir: string,
   entry: string,
   options: PipelineOptions,
-): Promise<{ url: string; title: string; page_id: string; skipped: string[] }> {
+): Promise<{
+  url: string;
+  title: string;
+  page_id: string;
+  skipped: string[];
+  sanitiser_warnings?: SanitiserWarning[];
+}> {
   const absDir = resolvePath(dir);
   const { entries, skipped } = planBundleUpload(absDir, entry);
 
@@ -593,27 +614,61 @@ export async function uploadBundleStreamed(
 
   return {
     url: result.url,
+    // #271 — carry the server's recipient URL through so a bundle upload prints
+    // the owner's branded address when they have a live custom domain.
+    ...(result.full_url ? { full_url: result.full_url } : {}),
     title: options.title ?? basename(absDir),
     page_id: result.page_id,
     skipped,
+    ...(result.sanitiser_warnings?.length
+      ? { sanitiser_warnings: result.sanitiser_warnings }
+      : {}),
   };
 }
 
-function formatUploadResult(
-  result: { url: string; title: string; page_id: string },
+export function formatUploadResult(
+  result: {
+    url: string;
+    full_url?: string;
+    title: string;
+    page_id: string;
+    sanitiser_warnings?: SanitiserWarning[];
+  },
   baseUrl: string,
   opts: { json?: boolean },
 ): string {
-  // Construct the full URL — the finalize response returns a relative path.
-  const fullUrl = result.url.startsWith("http")
-    ? result.url
-    : `${baseUrl.replace(/\/$/, "")}${result.url}`;
+  // #271 — the server owns the recipient address (branded when the owner has a
+  // live custom domain), so prefer its full_url. Fall back to baseUrl + the
+  // relative path only for an older server that does not send one.
+  const fullUrl =
+    result.full_url ??
+    (result.url.startsWith("http")
+      ? result.url
+      : `${baseUrl.replace(/\/$/, "")}${result.url}`);
 
   if (shouldOutputJson(opts)) {
     return JSON.stringify(
-      { data: { id: result.page_id, title: result.title, url: result.url, full_url: fullUrl } },
+      {
+        data: {
+          id: result.page_id,
+          title: result.title,
+          url: result.url,
+          full_url: fullUrl,
+          ...(result.sanitiser_warnings?.length
+            ? { warnings: result.sanitiser_warnings }
+            : {}),
+        },
+      },
       null,
       2,
+    );
+  }
+  if (result.sanitiser_warnings?.length) {
+    console.error(
+      [
+        "Sanitiser warnings:",
+        ...result.sanitiser_warnings.map((warning) => `  ${warning.message}`),
+      ].join("\n"),
     );
   }
   return [result.title, `  ${fullUrl}`, `  ID: ${result.page_id}`].join("\n");
@@ -709,7 +764,12 @@ export async function uploadCommand(
       };
 
       let skipped: string[] = [];
-      let result: { url: string; title: string; page_id: string };
+      let result: {
+        url: string;
+        title: string;
+        page_id: string;
+        sanitiser_warnings?: SanitiserWarning[];
+      };
       if (bundle) {
         const out = await uploadBundleStreamed(client, file, opts.entry ?? "index.html", pipelineOpts);
         skipped = out.skipped;

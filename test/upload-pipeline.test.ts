@@ -10,7 +10,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { SharedropApiClient, SharedropApiError } from "../src/client/api-client.js";
-import { uploadFileStreamed } from "../src/commands/upload.js";
+import {
+  formatUploadResult,
+  uploadFileStreamed,
+} from "../src/commands/upload.js";
 import { handleError } from "../src/output/errors.js";
 
 function writeTmpFile(name: string, content: string): string {
@@ -26,6 +29,15 @@ function newClient(): SharedropApiClient {
     baseUrl: "https://app.example.com",
   });
 }
+
+const SANITISER_WARNINGS = [
+  {
+    code: "removed_tag" as const,
+    detail: "script",
+    count: 1,
+    message: "Removed 1 script element.",
+  },
+];
 
 describe("sharedrop upload — three-step pipeline (UPLOAD-07)", () => {
   beforeEach(() => {
@@ -132,6 +144,32 @@ describe("sharedrop upload — three-step pipeline (UPLOAD-07)", () => {
     expect(signSpy).toHaveBeenCalledWith(
       expect.objectContaining({ content_type: "application/pdf" }),
     );
+  });
+
+  it("carries sanitiser warnings from finalize to the upload result", async () => {
+    const client = newClient();
+    vi.spyOn(client, "signUpload").mockResolvedValue({
+      upload_url: "https://uploads.example.com/k",
+      upload_token: "tkn",
+      finalize_url: "https://app.example.com/api/upload/finalize",
+      object_key: "k",
+    });
+    vi.spyOn(client, "streamUpload").mockResolvedValue(undefined);
+    vi.spyOn(client, "finalizeUpload").mockResolvedValue({
+      url: "/scotto/warned",
+      page_id: "p_warned",
+      slug: "warned",
+      visibility: "private",
+      mode: "static",
+      kind: "html",
+      contentType: "text/html",
+      sanitiser_warnings: SANITISER_WARNINGS,
+    });
+
+    const file = writeTmpFile("warned.html", "<script>bad()</script>");
+    const result = await uploadFileStreamed(client, file, {});
+
+    expect(result.sanitiser_warnings).toEqual(SANITISER_WARNINGS);
   });
 
   it("streamUpload uses duplex: \"half\" on the underlying fetch PUT", async () => {
@@ -466,5 +504,54 @@ describe("sharedrop upload — three-step pipeline (UPLOAD-07)", () => {
     for (const [url] of fetchMock.mock.calls) {
       expect(String(url)).not.toMatch(/\/api\/v1\/pages/);
     }
+  });
+});
+
+describe("formatUploadResult sanitiser warnings (#276)", () => {
+  const result = {
+    url: "/scotto/warned",
+    title: "Warned",
+    page_id: "p_warned",
+    sanitiser_warnings: SANITISER_WARNINGS,
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("puts warnings under data.warnings in JSON mode", () => {
+    const output = JSON.parse(
+      formatUploadResult(result, "https://app.example.com", { json: true }),
+    );
+
+    expect(output.data.warnings).toEqual(SANITISER_WARNINGS);
+  });
+
+  it("writes warnings to stderr in human mode, not the returned stdout", () => {
+    const previous = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: true,
+      configurable: true,
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const output = formatUploadResult(result, "https://app.example.com", {});
+      expect(output).not.toContain("Removed 1 script element.");
+      expect(error).toHaveBeenCalledWith(
+        "Sanitiser warnings:\n  Removed 1 script element.",
+      );
+    } finally {
+      if (previous) {
+        Object.defineProperty(process.stdout, "isTTY", previous);
+      }
+    }
+  });
+
+  it("suppresses the stderr copy when --json is set", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    formatUploadResult(result, "https://app.example.com", { json: true });
+
+    expect(error).not.toHaveBeenCalled();
   });
 });
