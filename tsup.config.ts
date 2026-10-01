@@ -6,7 +6,9 @@ const { version } = JSON.parse(
 ) as { version: string };
 
 export default defineConfig({
-  entry: { cli: "src/cli.ts" },
+  // #227: dist/cli.js (the bin) is the Node version check in src/bin.ts, which
+  // then loads the real CLI from dist/main.js.
+  entry: { cli: "src/bin.ts", main: "src/cli.ts" },
   format: ["esm"],
   dts: false,
   clean: true,

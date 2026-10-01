@@ -27,6 +27,12 @@ import {
   reservationsRevokeCommand,
 } from "./commands/reservation.js";
 import { trashEmptyCommand } from "./commands/trash.js";
+import {
+  linkCreateCommand,
+  linkListCommand,
+  linkPeopleCommand,
+  linkRevokeCommand,
+} from "./commands/link.js";
 
 const program = new Command()
   .name("sharedrop")
@@ -40,7 +46,7 @@ program
   .alias("drop")
   .description(
     "Upload a file (use - for stdin) or a folder. Files: HTML, MHTML, Markdown, PDF, images. " +
-      "A folder uploads as a multi-file bundle (entry HTML + relative css/js/image/font assets) — use --mode interactive to keep its JavaScript.",
+      "A folder uploads as a multi-file bundle (entry HTML + relative css/js/image/font assets). Use --mode interactive to keep its JavaScript.",
   )
   .option("--title <title>", "Page title (auto-detected if omitted)")
   .option("--visibility <vis>", "Page visibility: public, private, shared", "private")
@@ -225,9 +231,43 @@ reservations
   .option("--json", "Force JSON output")
   .action((id, opts) => reservationsRevokeCommand(id, opts, program.opts()));
 
+// #255 — disappearing links: a separate link with a time and/or view limit,
+// for anyone with it or only for named people. The page itself never changes.
+const link = program
+  .command("link")
+  .description("Manage disappearing links (Pro plan or higher)");
+link
+  .command("create <id>")
+  .description("Create a disappearing link for a page (anyone with it, or --people only)")
+  .option("--people <emails...>", "Only these people can open it, after signing in (comma or space separated)")
+  .option("--expires-in <duration>", "Time limit, e.g. 30m, 12h or 7d")
+  .option("--max-views <n>", "Total views allowed across everyone")
+  .option("--present", "Slide decks only: open straight into fullscreen Present mode")
+  .option("--no-email", "With --people: don't email them the link (send it yourself)")
+  .option("--json", "Force JSON output")
+  .action((id, opts) => linkCreateCommand(id, opts, program.opts()));
+link
+  .command("list <id>")
+  .description("List a page's disappearing links with their views, limits and people")
+  .option("--json", "Force JSON output")
+  .action((id, opts) => linkListCommand(id, opts, program.opts()));
+link
+  .command("people <id> <link-id>")
+  .description("Add or remove people on a link made for specific people")
+  .option("--add <emails...>", "Emails to add")
+  .option("--remove <emails...>", "Emails to remove")
+  .option("--no-email", "Don't email the people you add")
+  .option("--json", "Force JSON output")
+  .action((id, linkId, opts) => linkPeopleCommand(id, linkId, opts, program.opts()));
+link
+  .command("revoke <id> <link-id>")
+  .description("Revoke a disappearing link now (the page itself is unchanged)")
+  .option("--json", "Force JSON output")
+  .action((id, linkId, opts) => linkRevokeCommand(id, linkId, opts, program.opts()));
+
 program
   .command("about")
-  .description("Why sharedrop — positioning, capabilities, and key links (use --json for structured output)")
+  .description("Why sharedrop: positioning, capabilities, and key links (use --json for structured output)")
   .option("--json", "Force JSON output")
   .action(aboutCommand);
 

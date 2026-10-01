@@ -129,6 +129,25 @@ describe("formatWhoami — reserved-addresses line (RES-ME-1)", () => {
     expect(out).not.toContain("Reserved:");
   });
 
+  it("#227: --json passes the separate archive ceiling through verbatim", () => {
+    const me: V1MeResponse = {
+      ...baseMe,
+      tier: "pro",
+      entitlements: {
+        maxFileSizeBytes: 100 * 1024 * 1024,
+        maxTextFileSizeBytes: 10 * 1024 * 1024,
+        maxArchiveBytes: 10 * 1024 * 1024 * 1024,
+        allowedVisibilities: ["public", "private", "shared"],
+        maxVersionRetention: 25,
+      },
+    };
+    const out = JSON.parse(formatWhoami(me, "https://app.example.com", { json: true })) as {
+      data: V1MeResponse;
+    };
+    expect(out.data.entitlements?.maxFileSizeBytes).toBe(100 * 1024 * 1024);
+    expect(out.data.entitlements?.maxArchiveBytes).toBe(10 * 1024 * 1024 * 1024);
+  });
+
   it("adds no em dash to any output line", () => {
     const me: V1MeResponse = {
       ...baseMe,

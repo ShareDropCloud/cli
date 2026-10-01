@@ -14,11 +14,22 @@ export interface V1Page {
   updated_at: string;
 }
 
+/**
+ * #366 — set when the account's daily share-email limit (Free 10, Pro 500, Team 2000)
+ * stopped an invite email. The share or link itself still succeeded.
+ */
+export interface EmailWarning {
+  code: string;
+  limit: number;
+  message: string;
+}
+
 export interface V1ShareGrant {
   id: string;
   email: string;
   status: string;
   created_at: string;
+  email_warning?: EmailWarning | null;
 }
 
 // ─── #198 (RES-CLI-1) reservations ────────────────────────────────────────
@@ -113,7 +124,12 @@ export type BillingErrorCode =
   | "TIER_LIMIT"
   | "STORAGE_LIMIT"
   | "SEAT_LIMIT"
-  | "FILE_SIZE_EXCEEDED";
+  | "FILE_SIZE_EXCEEDED"
+  // #334 — the billing-lock write refusal. Deliberately NOT in the client's
+  // BILLING_CODES set: it is not a capacity error and there is nothing to
+  // upsell, so it renders through the plain `code` + `message` path instead of
+  // the envelope block. Listed here to keep the union in sync with the server.
+  | "PAYMENT_REQUIRED";
 
 export interface PricingBlock {
   pro: { monthly: number; storageGb: number; currency: "USD" };
@@ -168,6 +184,11 @@ export interface V1MeResponse {
   // Phase 12 / AGENT-04 additive fields — optional so older servers don't break.
   entitlements?: {
     maxFileSizeBytes: number;
+    // #360: the lower per-file limit for HTML, other text files and SVG.
+    maxTextFileSizeBytes?: number;
+    // #227: the separate per-file ceiling for `sharedrop archive`. Optional so
+    // older servers that predate the field still type-check.
+    maxArchiveBytes?: number;
     allowedVisibilities: string[];
     maxVersionRetention: number;
     // #185 — folders capability (catch-up for the shipped Phase 24 field).
@@ -183,4 +204,57 @@ export interface V1MeResponse {
   storage?: { usedGb: number; capGb: number; addonGb: number };
   pricing?: PricingBlock;
   upgradeUrl?: string;
+}
+
+// ─── #255 disappearing links ─────────────────────────────────────────────
+// A separate link that stops working at its time or view limit. It never
+// changes the page's own visibility or share list.
+export type EphemeralLinkAudience = "anyone" | "people";
+
+export interface EphemeralLink {
+  id: string;
+  url: string;
+  token: string;
+  audience: EphemeralLinkAudience;
+  /** The named people on a "people" link; empty for "anyone". */
+  emails: string[];
+  /** Only on create: whether Sharedrop emails the people the link. */
+  emailed?: boolean;
+  /** Only on create: the daily share-email limit could not cover everyone. */
+  email_warning?: EmailWarning | null;
+  expires_at: string | null;
+  max_views: number | null;
+  view_count: number;
+  present_only: boolean;
+  status: "active" | "expired" | "revoked";
+  revoked_at?: string | null;
+  created_at?: string;
+  /** Only on create: human summary of the limits. */
+  summary?: string;
+}
+
+export interface CreateEphemeralLinkBody {
+  audience?: EphemeralLinkAudience;
+  emails?: string[];
+  /** "people" links: email each person the link (default true). */
+  notify?: boolean;
+  expires_in_seconds?: number;
+  max_views?: number;
+  present_only?: boolean;
+}
+
+export interface EphemeralLinkPeopleResult {
+  id: string;
+  audience: EphemeralLinkAudience;
+  emails: string[];
+  added: number;
+  removed: number;
+  /** The newly added people who are being emailed the link. */
+  emailed?: string[];
+  /** The daily share-email limit could not cover everyone added. */
+  email_warning?: EmailWarning | null;
+  view_count: number;
+  max_views: number | null;
+  expires_at: string | null;
+  status: "active" | "expired" | "revoked";
 }

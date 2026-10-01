@@ -7,6 +7,8 @@ import type {
   V1MeResponse,
   Reservation,
   TrashEmptyResult,
+  EphemeralLink,
+  EphemeralLinkPeopleResult,
 } from "../client/types.js";
 import type { FolderNode } from "../client/api-client.js";
 
@@ -83,7 +85,11 @@ export function formatShare(grant: V1ShareGrant, pageTitle: string, opts: Format
   if (shouldOutputJson(opts)) {
     return JSON.stringify({ data: grant }, null, 2);
   }
-  return chalk.green(`Shared "${pageTitle}" with ${grant.email}`);
+  const shared = chalk.green(`Shared "${pageTitle}" with ${grant.email}`);
+  // #366 — the share stands, but the daily share-email limit stopped the email.
+  return grant.email_warning
+    ? `${shared}\n${chalk.yellow(`  ${grant.email_warning.message}`)}`
+    : shared;
 }
 
 export function formatDelete(pageTitle: string, opts: FormatOptions): string {
@@ -313,6 +319,97 @@ export function formatReservationRevoked(reservation: Reservation, opts: FormatO
     return JSON.stringify({ data: reservation }, null, 2);
   }
   return chalk.green(`Revoked reservation "${reservation.slug}" (status: ${reservation.status}).`);
+}
+
+// ─── #255 disappearing links ─────────────────────────────────────────────
+
+function linkAudienceLabel(link: { audience: string; emails: string[] }): string {
+  if (link.audience !== "people") return "Anyone with the link";
+  const n = link.emails.length;
+  return `${n} ${n === 1 ? "person" : "people"}`;
+}
+
+function linkViewsLabel(link: { view_count: number; max_views: number | null }): string {
+  return link.max_views != null
+    ? `${link.view_count} of ${link.max_views}`
+    : String(link.view_count);
+}
+
+export function formatLinkCreated(link: EphemeralLink, opts: FormatOptions): string {
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify({ data: link }, null, 2);
+  }
+  const lines = [
+    chalk.green("Disappearing link created"),
+    `  ${chalk.cyan(link.url)}`,
+    chalk.dim(`  ID: ${link.id}`),
+    `  ${linkAudienceLabel(link)}`,
+  ];
+  if (link.audience === "people" && link.emails.length > 0) {
+    lines.push(`  People: ${link.emails.join(", ")}`);
+    lines.push(
+      link.email_warning
+        ? chalk.yellow(`  They sign in with one of these emails to open it. ${link.email_warning.message}`)
+        : chalk.dim(
+            link.emailed === false
+              ? "  They sign in with one of these emails to open it. They were not emailed, so send them the link yourself."
+              : "  They sign in with one of these emails to open it. Sharedrop is emailing them the link.",
+          ),
+    );
+  }
+  if (link.summary) lines.push(`  ${link.summary}`);
+  lines.push(chalk.dim("  The page's own visibility and sharing are unchanged."));
+  return lines.join("\n");
+}
+
+export function formatLinkList(links: EphemeralLink[], opts: FormatOptions): string {
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify({ data: { links } }, null, 2);
+  }
+  if (links.length === 0) {
+    return chalk.dim("No disappearing links on this page.");
+  }
+  const table = new Table({
+    head: ["ID", "Status", "Who", "Views", "Expires", "URL"],
+    style: { head: ["cyan"] },
+  });
+  for (const link of links) {
+    table.push([
+      link.id,
+      link.status,
+      link.audience === "people" && link.emails.length > 0
+        ? link.emails.join("\n")
+        : linkAudienceLabel(link),
+      linkViewsLabel(link),
+      link.expires_at ? new Date(link.expires_at).toLocaleString() : "no time limit",
+      link.status === "active" ? chalk.cyan(link.url) : chalk.dim(link.url),
+    ]);
+  }
+  return table.toString();
+}
+
+export function formatLinkPeopleUpdated(
+  result: EphemeralLinkPeopleResult,
+  opts: FormatOptions,
+): string {
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify({ data: result }, null, 2);
+  }
+  return [
+    chalk.green(`Updated link ${result.id}: ${result.added} added, ${result.removed} removed.`),
+    result.emails.length > 0
+      ? `  People: ${result.emails.join(", ")}`
+      : chalk.dim("  Nobody is on this link now, so nobody can open it."),
+    // #366 — the daily share-email limit could not cover everyone added.
+    ...(result.email_warning ? [chalk.yellow(`  ${result.email_warning.message}`)] : []),
+  ].join("\n");
+}
+
+export function formatLinkRevoked(linkId: string, opts: FormatOptions): string {
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify({ data: { revoked: true, link_id: linkId } }, null, 2);
+  }
+  return chalk.green(`Revoked disappearing link ${linkId}. The page itself is unchanged.`);
 }
 
 export function formatWhoami(me: V1MeResponse, baseUrl: string, opts: FormatOptions): string {

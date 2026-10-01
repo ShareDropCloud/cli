@@ -5,6 +5,7 @@ import type {
   BillingErrorEnvelope,
   Reservation, CreateReservationBody,
   TrashEmptyResult,
+  EphemeralLink, CreateEphemeralLinkBody, EphemeralLinkPeopleResult,
 } from "./types.js";
 
 /**
@@ -17,6 +18,9 @@ import type {
  * full envelope (price + upgradeUrl) and joins the set so the CLI renders its
  * upsell consistently with the other capacity codes.
  */
+// #334 — PAYMENT_REQUIRED (the billing-lock write refusal) is deliberately
+// ABSENT. It is not a capacity error and has nothing to upsell, so it takes the
+// plain code + message path instead of the envelope's pricing block.
 const BILLING_CODES = new Set([
   "STORAGE_LIMIT",
   "TIER_LIMIT",
@@ -556,6 +560,54 @@ export class SharedropApiClient {
     return this.request<V1MeResponse>("/api/v1/me");
   }
 
+  // ─── #255 disappearing links (enveloped v1 routes) ────────────────────
+
+  async createEphemeralLink(
+    pageId: string,
+    body: CreateEphemeralLinkBody,
+  ): Promise<EphemeralLink> {
+    const payload: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(body)) {
+      if (v !== undefined) payload[k] = v;
+    }
+    return this.request<EphemeralLink>(`/api/v1/pages/${pageId}/ephemeral-links`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async listEphemeralLinks(pageId: string): Promise<{ links: EphemeralLink[] }> {
+    return this.request<{ links: EphemeralLink[] }>(
+      `/api/v1/pages/${pageId}/ephemeral-links`,
+    );
+  }
+
+  async updateEphemeralLinkPeople(
+    pageId: string,
+    linkId: string,
+    change: { add_emails?: string[]; remove_emails?: string[]; notify?: boolean },
+  ): Promise<EphemeralLinkPeopleResult> {
+    return this.request<EphemeralLinkPeopleResult>(
+      `/api/v1/pages/${pageId}/ephemeral-links/${linkId}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(change),
+      },
+    );
+  }
+
+  async revokeEphemeralLink(
+    pageId: string,
+    linkId: string,
+  ): Promise<{ revoked: boolean; link_id: string }> {
+    return this.request<{ revoked: boolean; link_id: string }>(
+      `/api/v1/pages/${pageId}/ephemeral-links/${linkId}`,
+      { method: "DELETE" },
+    );
+  }
+
   // ─── #198 (RES-CLI-1) reservation methods ─────────────────────────────
   //
   // The reservation routes are ENVELOPED v1 routes, so these go through the
@@ -670,8 +722,8 @@ export class SharedropApiClient {
     contentType: string,
     contentLength: number,
   ): Promise<void> {
-    // Node 18.5+ streaming PUT: duplex: "half" is REQUIRED when body is a
-    // ReadableStream / Node Readable. engines.node >= 18.5.0 in package.json
+    // Streaming PUT: duplex: "half" is REQUIRED when body is a
+    // ReadableStream / Node Readable. engines.node >= 20.10.0 in package.json
     // documents that contract; no Buffer fallback exists by design.
     const res = await fetch(uploadUrl, {
       method: "PUT",

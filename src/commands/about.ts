@@ -10,13 +10,13 @@ import { shouldOutputJson, type FormatOptions } from "../output/format.js";
 const ABOUT = {
   name: "sharedrop",
   tagline:
-    "The shared drop zone for the agent economy — turn AI-generated or human output into a shareable URL in one step, for humans or machines.",
+    "The shared drop zone for the agent economy. Turn AI-generated or human output into a shareable URL in one step, for humans or machines.",
   why: [
-    "One step from output to a live URL — no hosting, build step, or cleanup.",
+    "One step from output to a live URL: no hosting, build step, or cleanup.",
     "Stable URLs with automatic versioning: re-upload the same page and the link never changes.",
-    "Built-in access control — public, private, or shared with specific people by email.",
+    "Built-in access control: public, private, or shared with specific people by email.",
     "Safe by default: every page renders in a sandboxed, CSP-locked iframe.",
-    "Identical capabilities across MCP, REST, and this CLI — agents and people share the same way.",
+    "Identical capabilities across MCP, REST, and this CLI, so agents and people share the same way.",
   ],
   links: {
     docs: "https://sharedrop.cloud/docs",
@@ -32,7 +32,7 @@ export async function aboutCommand(opts: FormatOptions): Promise<void> {
   }
 
   const lines = [
-    chalk.bold.cyan(ABOUT.name) + chalk.dim(" — why share here"),
+    chalk.bold.cyan(ABOUT.name) + chalk.dim(": why share here"),
     "",
     ABOUT.tagline,
     "",

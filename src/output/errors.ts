@@ -38,6 +38,16 @@ export function statusToExitCode(status: number): number {
  *   line 3 (cyan url): the upgrade link.
  */
 function renderEnvelope(env: BillingErrorEnvelope["error"]): string {
+  // #334 — the billing-lock refusal never upsells: the owner already pays, the
+  // card just failed, and the message already names the page to fix it on. The
+  // code is kept out of api-client's BILLING_CODES, so a 402 PAYMENT_REQUIRED
+  // reaches the plain `Error: <message>` path instead of here. This guard exists
+  // because the final branch below is an unguarded SEAT_LIMIT fallthrough, which
+  // would otherwise turn a failed card into a "seat limit reached" upsell.
+  if (env.code === "PAYMENT_REQUIRED") {
+    return chalk.red(env.message);
+  }
+
   const upgradeLine = `Upgrade: ${chalk.cyan(env.upgradeUrl)}`;
 
   if (env.code === "STORAGE_LIMIT") {

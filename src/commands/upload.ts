@@ -288,7 +288,7 @@ function uploadRetryDelayMs(error: unknown, attempt: number): number {
  *   3. final — POST /api/upload/finalize with the object_key + token
  *
  * Single locked path: no Buffer fallback, no fetch capability sniffing —
- * the engines.node >= 18.5.0 pin in packages/cli/package.json is the
+ * the engines.node >= 20.10.0 pin in packages/cli/package.json is the
  * executor's guarantee that streaming fetch with duplex: "half" is
  * available.
  */
@@ -475,8 +475,8 @@ function planBundleUpload(dir: string, entry: string): BundlePlan {
   if (!all.includes(entryRel)) {
     throw new SharedropApiError(
       "VALIDATION_ERROR",
-      `No "${entryRel}" found in ${dir}. A folder upload needs an entry HTML file — ` +
-        `name it index.html or pass --entry <file>.`,
+      `No "${entryRel}" found in ${dir}. A folder upload needs an entry HTML file. ` +
+        `Name it index.html or pass --entry <file>.`,
       400,
     );
   }
@@ -506,7 +506,7 @@ function planBundleUpload(dir: string, entry: string): BundlePlan {
   if (assetCount > MAX_BUNDLE_ASSETS) {
     throw new SharedropApiError(
       "VALIDATION_ERROR",
-      `Bundle has ${assetCount} assets — the limit is ${MAX_BUNDLE_ASSETS}.`,
+      `Bundle has ${assetCount} assets; the limit is ${MAX_BUNDLE_ASSETS}.`,
       400,
     );
   }
