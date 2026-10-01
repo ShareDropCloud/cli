@@ -1,4 +1,4 @@
-// #366 — the CLI names the daily share-email limit when the server says it
+// #366: the CLI names the daily share-email limit when the server says it
 // stopped an invite email; the share or link itself still succeeded.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {

@@ -1,4 +1,4 @@
-// Phase 15 / UPLOAD-07 — CLI streamed-upload pipeline.
+// Phase 15 / UPLOAD-07: CLI streamed-upload pipeline.
 //
 // Locks the three-step flow (sign → PUT → finalize) against accidental
 // regression to the legacy direct-POST to /api/v1/pages and against
@@ -39,7 +39,7 @@ const SANITISER_WARNINGS = [
   },
 ];
 
-describe("sharedrop upload — three-step pipeline (UPLOAD-07)", () => {
+describe("sharedrop upload: three-step pipeline (UPLOAD-07)", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -80,7 +80,7 @@ describe("sharedrop upload — three-step pipeline (UPLOAD-07)", () => {
       mode: "interactive",
     });
 
-    // Order assertions — sign before PUT before finalize.
+    // Order assertions: sign before PUT before finalize.
     expect(signSpy).toHaveBeenCalledBefore(streamSpy as never);
     expect(streamSpy).toHaveBeenCalledBefore(finalizeSpy as never);
 

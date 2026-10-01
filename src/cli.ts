@@ -231,7 +231,7 @@ reservations
   .option("--json", "Force JSON output")
   .action((id, opts) => reservationsRevokeCommand(id, opts, program.opts()));
 
-// #255 — disappearing links: a separate link with a time and/or view limit,
+// #255, disappearing links: a separate link with a time and/or view limit,
 // for anyone with it or only for named people. The page itself never changes.
 const link = program
   .command("link")

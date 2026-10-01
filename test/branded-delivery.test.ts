@@ -1,4 +1,4 @@
-// #271 — the CLI prints the recipient address the SERVER chose.
+// #271: the CLI prints the recipient address the SERVER chose.
 //
 // Two paths previously assembled a URL from the CLI's own base URL: the upload
 // formatter (finalize returned a relative path only) and `list --folder` (which
@@ -23,7 +23,7 @@ function silenceLog() {
   return vi.spyOn(console, "log").mockImplementation(() => {});
 }
 
-describe("CLI upload output — branded delivery", () => {
+describe("CLI upload output: branded delivery", () => {
   beforeEach(() => vi.restoreAllMocks());
   afterEach(() => vi.restoreAllMocks());
 
@@ -61,11 +61,11 @@ describe("CLI upload output — branded delivery", () => {
         "https://app.example.com",
         {},
       ),
-    ).not.toContain("—");
+    ).not.toContain("\u2014");
   });
 });
 
-describe("CLI list --folder — branded delivery", () => {
+describe("CLI list --folder: branded delivery", () => {
   const FID = "11111111-1111-4111-8111-111111111111";
 
   beforeEach(() => vi.restoreAllMocks());

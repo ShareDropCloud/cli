@@ -42,7 +42,7 @@ export async function listCommand(
             file_size: n.fileSize ?? 0,
             visibility: n.visibility ?? "private",
             url: `/${me.username}/${slug}`,
-            // #271 — the server owns the recipient URL (branded when the owner
+            // #271: the server owns the recipient URL (branded when the owner
             // has a live custom domain), so never reassemble it from baseUrl.
             full_url:
               n.fullUrl ?? `${baseUrl.replace(/\/$/, "")}/${me.username}/${slug}`,

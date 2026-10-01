@@ -1,4 +1,4 @@
-// #198 Phase 31 (31-03) Task 1 — CLI api-client reservation methods.
+// #198 Phase 31 (31-03) Task 1: CLI api-client reservation methods.
 //
 // Reservation routes are ENVELOPED v1 routes ({ data } / { data, pagination }),
 // so createReservation / listReservations / revokeReservation MUST route through
@@ -54,7 +54,7 @@ const sampleReservation: Reservation = {
   updated_at: "2026-07-19T00:00:00.000Z",
 };
 
-describe("SharedropApiClient — reservation methods (enveloped, Bearer)", () => {
+describe("SharedropApiClient: reservation methods (enveloped, Bearer)", () => {
   beforeEach(() => vi.restoreAllMocks());
   afterEach(() => vi.restoreAllMocks());
 
@@ -80,7 +80,7 @@ describe("SharedropApiClient — reservation methods (enveloped, Bearer)", () =>
     expect(init.method).toBe("POST");
     expect(init.headers["Authorization"]).toBe("Bearer sd_test");
     expect(init.headers["Content-Type"]).toBe("application/json");
-    // Only the provided keys ride the body — no explicit undefined fields.
+    // Only the provided keys ride the body, no explicit undefined fields.
     expect(JSON.parse(init.body)).toEqual({
       title: "Weekly metrics",
       intended_agent_name: "metrics-bot",

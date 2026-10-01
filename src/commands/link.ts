@@ -1,4 +1,4 @@
-// #255 — disappearing links from the terminal: create, list, change the people
+// #255, disappearing links from the terminal: create, list, change the people
 // on a link, revoke. A disappearing link is a separate URL that stops working at
 // its time or view limit; it never changes the page's own visibility or sharing.
 import { SharedropApiClient, SharedropApiError } from "../client/api-client.js";

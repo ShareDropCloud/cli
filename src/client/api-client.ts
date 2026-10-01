@@ -14,11 +14,11 @@ import type {
  * is attached to the thrown `SharedropApiError` so `handleError` can render
  * the friendly 402 block (or emit the verbatim envelope in --json mode).
  *
- * #126 — `FILE_SIZE_EXCEEDED` (a 402 from /api/upload/sign) now carries the
+ * #126: `FILE_SIZE_EXCEEDED` (a 402 from /api/upload/sign) now carries the
  * full envelope (price + upgradeUrl) and joins the set so the CLI renders its
  * upsell consistently with the other capacity codes.
  */
-// #334 — PAYMENT_REQUIRED (the billing-lock write refusal) is deliberately
+// #334: PAYMENT_REQUIRED (the billing-lock write refusal) is deliberately
 // ABSENT. It is not a capacity error and has nothing to upsell, so it takes the
 // plain code + message path instead of the envelope's pricing block.
 const BILLING_CODES = new Set([
@@ -88,7 +88,7 @@ export interface SignUploadParams {
   /** Set on a re-upload; exempts the sign page-count cap (260703-pzs). */
   page_id?: string;
   /**
-   * #198 (RES-ME-1) — claims a reserved address on a NEW upload. Mutually
+   * #198 (RES-ME-1): claims a reserved address on a NEW upload. Mutually
    * exclusive with page_id: the sign route rejects both together with
    * reservation_claim_conflict. Flows into the sign body via JSON.stringify
    * with no signUpload method change.
@@ -112,7 +112,7 @@ export interface FinalizeUploadParams {
   workspace?: string;
   page_id?: string;
   /**
-   * #185 — destination folder for a NEW upload (snake_case; the finalize route
+   * #185: destination folder for a NEW upload (snake_case; the finalize route
    * validates it is an owned live folder and gates on Pro). Ignored by the
    * server on a re-upload (page_id set), so the caller must not send it then.
    */
@@ -128,7 +128,7 @@ export interface SanitiserWarning {
 
 export interface FinalizeUploadResponse {
   url: string;
-  /** #271 — absolute recipient URL from the server: the owner's branded share
+  /** #271, absolute recipient URL from the server: the owner's branded share
    *  hostname when they have a live custom domain and the page is eligible,
    *  otherwise the standard Sharedrop address. Older servers omit it. */
   full_url?: string;
@@ -141,7 +141,7 @@ export interface FinalizeUploadResponse {
   sanitiser_warnings?: SanitiserWarning[];
 }
 
-// ─── Bundle (folder) upload types — Epic 2 / #81, #90 ─────────────────────
+// ─── Bundle (folder) upload types: Epic 2 / #81, #90 ─────────────────────
 
 export interface SignBundleParams {
   files: Array<{ filename: string; content_type: string; size_bytes: number }>;
@@ -173,7 +173,7 @@ export interface FinalizeBundleParams {
 
 export interface FinalizeBundleResponse {
   url: string;
-  /** #271 — absolute recipient URL from the server (branded when the owner has
+  /** #271: absolute recipient URL from the server (branded when the owner has
    *  a live custom domain). Older servers omit it. */
   full_url?: string;
   page_id: string;
@@ -199,9 +199,9 @@ export interface ArchiveCreateParams {
   workspace?: string;
   /** Resolved destination folder id (path -> id resolved client-side). */
   folder_id?: string;
-  /** #198 — claims a reserved address; the claim itself fires at complete. */
+  /** #198: claims a reserved address; the claim itself fires at complete. */
   reservation_id?: string;
-  /** #207 — store ANY file as a blob (skip the server's archive-extension check). */
+  /** #207: store ANY file as a blob (skip the server's archive-extension check). */
   as_archive?: boolean;
 }
 
@@ -250,7 +250,7 @@ export class SharedropApiError extends Error {
     /** Populated only when status === 402 and code ∈ BILLING_CODES. */
     public envelope?: BillingErrorEnvelope["error"],
     /**
-     * #185 — the folder-delete 409 (`FOLDER_NOT_EMPTY`) carries the descendant
+     * #185: the folder-delete 409 (`FOLDER_NOT_EMPTY`) carries the descendant
      * counts so the command layer can print the refusal ("N page(s), M
      * folder(s)") and prompt for --force. Additive; unused by other codes.
      */
@@ -297,7 +297,7 @@ export interface OwnerNode {
   mode?: string;
   visibility?: string;
   fileSize?: number;
-  // #271 — the recipient-facing URL the server built for this page. Branded when
+  // #271: the recipient-facing URL the server built for this page. Branded when
   // the owner has a live custom domain and the page is eligible, standard
   // otherwise. Optional so folder rows and older servers stay assignable.
   fullUrl?: string | null;
@@ -449,7 +449,7 @@ export class SharedropApiClient {
   }
 
   /**
-   * #139 — download a page's complete artefact as a zip. The response body is
+   * #139: download a page's complete artefact as a zip. The response body is
    * BINARY (application/zip), so this bypasses the JSON `request` helper and
    * returns a Buffer. On error the body is the JSON v1 error envelope; map it to
    * SharedropApiError (same shape as requestVoid) so handleError picks the right
@@ -470,7 +470,7 @@ export class SharedropApiClient {
   }
 
   /**
-   * #207 — download an ARCHIVE-kind page's RAW bytes. GET /api/archives/:id/download
+   * #207: download an ARCHIVE-kind page's RAW bytes. GET /api/archives/:id/download
    * responds 302 to a short-TTL presigned R2 GetObject URL (forced
    * application/octet-stream + attachment). We follow the redirect with the
    * DEFAULT redirect mode: undici (Node's fetch) strips the Authorization header
@@ -479,11 +479,11 @@ export class SharedropApiClient {
    * dance needed. Distinct from downloadPage (which zips PAGES-bucket objects and
    * 404s for an archive, since an archive has none).
    *
-   * Errors here are FLAT ({ error: "Not found" } — error is a STRING), unlike the
+   * Errors here are FLAT ({ error: "Not found" }, error is a STRING), unlike the
    * v1 envelope, so map both shapes into SharedropApiError.
    */
   /**
-   * #207 — open an archive download as a STREAM. The route 302-redirects to a
+   * #207: open an archive download as a STREAM. The route 302-redirects to a
    * presigned octet-stream R2 URL (fetch follows it); we return the OK Response so
    * the caller can pipe `res.body` straight to disk. A 10 GB archive must never be
    * buffered in memory (Fable #9), so this deliberately does NOT return a Buffer.
@@ -500,11 +500,11 @@ export class SharedropApiClient {
       };
       const errField = body.error;
       if (errField && typeof errField === "object" && "code" in errField) {
-        // v1-envelope shape ({ code, message }) — same handling as downloadPage.
+        // v1-envelope shape ({ code, message }), same handling as downloadPage.
         const e = errField as { code: string; message: string };
         throw new SharedropApiError(e.code, e.message, res.status);
       }
-      // Flat shape ({ error: "string" }) — the archive route's default.
+      // Flat shape ({ error: "string" }), the archive route's default.
       const msg = typeof errField === "string" ? errField : res.statusText;
       const code =
         res.status === 404
@@ -519,8 +519,8 @@ export class SharedropApiClient {
   }
 
   /**
-   * #140 — fetch a page's RAW content via token handoff. Two steps: mint a
-   * short-lived signed `fetch_url` from the v1 API (JSON envelope — `request`
+   * #140: fetch a page's RAW content via token handoff. Two steps: mint a
+   * short-lived signed `fetch_url` from the v1 API (JSON envelope: `request`
    * maps any error envelope to SharedropApiError), then HTTP GET that URL (the
    * token is in the URL, no auth header) and return the raw bytes as a Buffer.
    * Distinct from `downloadPage`, which returns a zip of the whole artefact.
@@ -619,7 +619,7 @@ export class SharedropApiClient {
   /**
    * Reserve a placeholder address. Only the provided keys ride the body (no
    * explicit undefined fields). Resolves to the serialized reservation plus the
-   * one-time sdr_ claim_token sibling — the caller MUST surface the token once
+   * one-time sdr_ claim_token sibling: the caller MUST surface the token once
    * and never log it (it cannot be re-fetched).
    */
   async createReservation(
@@ -660,7 +660,7 @@ export class SharedropApiClient {
   //
   // The sign → PUT → finalize sequence replaces the legacy direct-POST raw
   // HTML upload path. The PUT step is performed by `streamUpload` below to
-  // keep policy (sign / finalize) and transport (PUT) on separate methods —
+  // keep policy (sign / finalize) and transport (PUT) on separate methods:
   // easier to mock in tests.
   //
   // Note: the sign + finalize endpoints return a flat JSON body (not the
@@ -727,7 +727,7 @@ export class SharedropApiClient {
     // documents that contract; no Buffer fallback exists by design.
     const res = await fetch(uploadUrl, {
       method: "PUT",
-      // @ts-expect-error — `duplex` is part of the RequestInit type in Node
+      // @ts-expect-error: `duplex` is part of the RequestInit type in Node
       // 18.5+ but missing from the lib.dom typings TS picks up here.
       duplex: "half",
       headers: {
@@ -791,7 +791,7 @@ export class SharedropApiClient {
         );
       }
       const msg = typeof errField === "string" ? errField : res.statusText;
-      // 401 from finalize = expired upload window — surface a distinct code.
+      // 401 from finalize = expired upload window: surface a distinct code.
       const code = res.status === 401 ? "TOKEN_EXPIRED" : "FINALIZE_FAILED";
       throw new SharedropApiError(
         code,
@@ -877,7 +877,7 @@ export class SharedropApiClient {
       body: JSON.stringify(params),
     });
     if (!res.ok) {
-      // 401 from finalize = expired upload window — surface a distinct code.
+      // 401 from finalize = expired upload window: surface a distinct code.
       await this.throwFlatUploadError(
         res,
         res.status === 401 ? "TOKEN_EXPIRED" : "BUNDLE_FINALIZE_FAILED",
@@ -966,7 +966,7 @@ export class SharedropApiClient {
 
   /**
    * PUT one part's byte range to its presigned R2 URL and return the ETag R2
-   * reports (verbatim, quotes included — CompleteMultipartUpload accepts it).
+   * reports (verbatim, quotes included: CompleteMultipartUpload accepts it).
    * No auth header and no Content-Type: the presigned URL is the capability and
    * the UploadPart signature covers only bucket/key/upload-id/part-number.
    */
@@ -977,7 +977,7 @@ export class SharedropApiClient {
   ): Promise<string> {
     const res = await fetch(url, {
       method: "PUT",
-      // @ts-expect-error — `duplex` is required for a streamed body in Node 18.5+
+      // @ts-expect-error: `duplex` is required for a streamed body in Node 18.5+
       // but missing from the lib.dom RequestInit typings TS picks up here.
       duplex: "half",
       headers: { "Content-Length": String(contentLength) },
@@ -1157,7 +1157,7 @@ export class SharedropApiClient {
   }
 
   /**
-   * #191 — PATCH /api/folders/:id to rename ({ name }) and/or reparent
+   * #191: PATCH /api/folders/:id to rename ({ name }) and/or reparent
    * ({ parentId }). Rename is not tier-gated; a reparent is (the server returns
    * FOLDERS_RESTRICTED 403 on a free key). Any flat error code (404 not found,
    * 400 cycle/depth, 409 duplicate sibling, FOLDERS_RESTRICTED) is preserved

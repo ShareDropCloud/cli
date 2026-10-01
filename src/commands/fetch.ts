@@ -5,7 +5,7 @@ import { resolveAuth, resolveBaseUrl } from "../auth/resolve.js";
 import { requireAuth, handleError } from "../output/errors.js";
 
 /**
- * #140 — `sharedrop fetch <id>` pulls a page's RAW content (token handoff).
+ * #140: `sharedrop fetch <id>` pulls a page's RAW content (token handoff).
  *
  * Distinct from `download` (which writes a zip of the whole artefact): this
  * mints a short-lived signed URL, GETs the raw bytes, and emits just the page's

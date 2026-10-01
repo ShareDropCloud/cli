@@ -1,4 +1,4 @@
-// #191 — top-level `move <id>` (page into/out of a folder).
+// #191: top-level `move <id>` (page into/out of a folder).
 //
 // Mirrors the folder-cmd.test.ts style: auth resolution is mocked so the
 // command builds a client without env/config, and client methods are spied on
@@ -19,7 +19,7 @@ function silenceLog() {
   return vi.spyOn(console, "log").mockImplementation(() => {});
 }
 
-describe("moveCommand — page move", () => {
+describe("moveCommand: page move", () => {
   beforeEach(() => vi.restoreAllMocks());
   afterEach(() => vi.restoreAllMocks());
 

@@ -1,4 +1,4 @@
-// #207 — `sharedrop download <id>` is kind-aware. An archive-kind page downloads
+// #207: `sharedrop download <id>` is kind-aware. An archive-kind page downloads
 // its RAW bytes via GET /api/archives/:id/download (302 -> presigned octet-stream
 // URL); every other kind keeps the existing v1 zip path byte-for-byte.
 //
@@ -42,10 +42,10 @@ function collector(): { sink: Writable; chunks: Buffer[] } {
   return { sink, chunks };
 }
 
-describe("downloadCommand — kind-aware download", () => {
+describe("downloadCommand: kind-aware download", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    // node:fs is a module mock, so call counts survive restoreAllMocks — clear.
+    // node:fs is a module mock, so call counts survive restoreAllMocks, clear.
     vi.mocked(writeFileSync).mockClear();
     vi.mocked(createWriteStream).mockClear();
     vi.mocked(statSync).mockReturnValue({ size: 8 } as never);
@@ -155,7 +155,7 @@ describe("downloadCommand — kind-aware download", () => {
   });
 });
 
-describe("SharedropApiClient.openArchiveDownload — wire contract", () => {
+describe("SharedropApiClient.openArchiveDownload: wire contract", () => {
   beforeEach(() => vi.restoreAllMocks());
   afterEach(() => vi.restoreAllMocks());
 

@@ -12,7 +12,7 @@ export const EXIT_CODES = {
   RATE_LIMITED: 4,
   NOT_FOUND: 5,
   VALIDATION_ERROR: 6,
-  /** Phase 12 / AGENT-06 — emitted on HTTP 402 billing-envelope responses. */
+  /** Phase 12 / AGENT-06: emitted on HTTP 402 billing-envelope responses. */
   PAYMENT_REQUIRED: 7,
 } as const;
 
@@ -38,7 +38,7 @@ export function statusToExitCode(status: number): number {
  *   line 3 (cyan url): the upgrade link.
  */
 function renderEnvelope(env: BillingErrorEnvelope["error"]): string {
-  // #334 — the billing-lock refusal never upsells: the owner already pays, the
+  // #334, the billing-lock refusal never upsells: the owner already pays, the
   // card just failed, and the message already names the page to fix it on. The
   // code is kept out of api-client's BILLING_CODES, so a 402 PAYMENT_REQUIRED
   // reaches the plain `Error: <message>` path instead of here. This guard exists
@@ -54,7 +54,7 @@ function renderEnvelope(env: BillingErrorEnvelope["error"]): string {
     const headline = chalk.red(
       `Storage limit reached: ${env.currentUsageGb} GB of ${env.capGb} GB used.`,
     );
-    // #126 — recommend the add-on block the server picked (matches upgradeUrl),
+    // #126: recommend the add-on block the server picked (matches upgradeUrl),
     // falling back to the smallest block (storageAddons[0] = 25 GB).
     const addon =
       (env.recommendedAddonGb !== undefined
@@ -109,7 +109,7 @@ function renderEnvelope(env: BillingErrorEnvelope["error"]): string {
 export function handleError(error: unknown, opts: FormatOptions): never {
   if (error instanceof SharedropApiError) {
     const exitCode = statusToExitCode(error.status);
-    // #191 — free-tier folder commands (create / move) 403 with
+    // #191: free-tier folder commands (create / move) 403 with
     // FOLDERS_RESTRICTED. Surface the server reason plus an upgrade link instead
     // of a bare `Error:` line. JSON mode falls through to the structured branch
     // so machine output stays { error: { code, message } }.

@@ -86,7 +86,7 @@ export function formatShare(grant: V1ShareGrant, pageTitle: string, opts: Format
     return JSON.stringify({ data: grant }, null, 2);
   }
   const shared = chalk.green(`Shared "${pageTitle}" with ${grant.email}`);
-  // #366 — the share stands, but the daily share-email limit stopped the email.
+  // #366: the share stands, but the daily share-email limit stopped the email.
   return grant.email_warning
     ? `${shared}\n${chalk.yellow(`  ${grant.email_warning.message}`)}`
     : shared;
@@ -140,7 +140,7 @@ export function formatFolderCreated(folder: FolderNode, opts: FormatOptions): st
 }
 
 /**
- * #191 — a nested `folder create` whose whole path already existed. Idempotent:
+ * #191: a nested `folder create` whose whole path already existed. Idempotent:
  * nothing was created, exit 0. Names the leaf id so the caller can act on it.
  */
 export function formatFolderAlreadyExists(path: string, id: string, opts: FormatOptions): string {
@@ -400,7 +400,7 @@ export function formatLinkPeopleUpdated(
     result.emails.length > 0
       ? `  People: ${result.emails.join(", ")}`
       : chalk.dim("  Nobody is on this link now, so nobody can open it."),
-    // #366 — the daily share-email limit could not cover everyone added.
+    // #366: the daily share-email limit could not cover everyone added.
     ...(result.email_warning ? [chalk.yellow(`  ${result.email_warning.message}`)] : []),
   ].join("\n");
 }
@@ -427,7 +427,7 @@ export function formatWhoami(me: V1MeResponse, baseUrl: string, opts: FormatOpti
   try {
     host = new URL(baseUrl).host;
   } catch {
-    /* not a parseable URL — show the raw value */
+    /* not a parseable URL: show the raw value */
   }
 
   const lines = [

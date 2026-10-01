@@ -26,9 +26,9 @@ import { resolveReservationTarget } from "./reservation.js";
  * import from `@/lib/...` (Next.js app boundary).
  *
  * The server derives the page KIND from the extension (`detectKind`), so this
- * value is informational — it becomes the `upload.sign` correlation log entry
+ * value is informational, it becomes the `upload.sign` correlation log entry
  * and the upload token's `mime` claim. We send the file's NATURAL, bare MIME
- * (no `; charset` — the uploads Worker 415s on parameters). A complete map keeps
+ * (no `; charset`: the uploads Worker 415s on parameters). A complete map keeps
  * uploads out of `application/octet-stream` and lets the CLI reject unsupported
  * files before the PUT (see `isSupportedUpload`).
  */
@@ -62,12 +62,12 @@ const EXTENSION_TO_MIME: Record<string, string> = {
   heif: "image/heif",
   tif: "image/tiff",
   tiff: "image/tiff",
-  // Video — Pro/Team only (allow-list: mp4/webm/mov/m4v). Kind gate is server-side.
+  // Video, Pro/Team only (allow-list: mp4/webm/mov/m4v). Kind gate is server-side.
   mp4: "video/mp4",
   webm: "video/webm",
   mov: "video/quicktime",
   m4v: "video/mp4",
-  // Source code — rendered to syntax-highlighted HTML server-side (vj9). Free-tier.
+  // Source code: rendered to syntax-highlighted HTML server-side (vj9). Free-tier.
   js: "text/javascript", mjs: "text/javascript", cjs: "text/javascript",
   jsx: "text/javascript", ts: "text/plain", tsx: "text/plain",
   py: "text/plain", go: "text/plain", rs: "text/plain", rb: "text/plain",
@@ -80,7 +80,7 @@ const EXTENSION_TO_MIME: Record<string, string> = {
   css: "text/css", scss: "text/plain", less: "text/plain", xml: "application/xml",
   // Plain text (vj9). Free-tier.
   txt: "text/plain", log: "text/plain", text: "text/plain",
-  // Office documents (wxj) — doc (.docx) + sheet (.csv/.xlsx). Free-tier, v1.
+  // Office documents (wxj): doc (.docx) + sheet (.csv/.xlsx). Free-tier, v1.
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   csv: "text/csv",
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -121,11 +121,11 @@ export function isSupportedUpload(filename: string): boolean {
  * `content_type` and the matching PUT `Content-Type`). These are the extensions
  * the server's allowlist (lib/uploads/bundle-path.ts:ASSET_CONTENT_TYPES) accepts;
  * a file whose extension isn't here is skipped from a folder upload (the server
- * would reject the whole bundle otherwise — e.g. a stray .DS_Store or README.md).
+ * would reject the whole bundle otherwise: e.g. a stray .DS_Store or README.md).
  *
  * MUST be bare types with NO `; charset=…` parameter. The uploads Worker checks
  * the PUT against the signed token's `mime` claim by stripping parameters from
- * the actual header but comparing it against the VERBATIM claim — so a
+ * the actual header but comparing it against the VERBATIM claim, so a
  * charset-qualified value ("text/css; charset=utf-8") never matches the stripped
  * "text/css" and fails with `mime_mismatch`. (The server re-derives the stored
  * content-type from the extension at finalize, so charset isn't lost on serve.)
@@ -182,7 +182,7 @@ async function readStdin(): Promise<Buffer> {
 
 /**
  * Read HTML from a file path or stdin ("-"). Used by `update <id> <file>`
- * (kept as a back-compat export — update still uses the streamed pipeline
+ * (kept as a back-compat export: update still uses the streamed pipeline
  * via `uploadFileStreamed` below for the file branch; this helper survives
  * for any caller that wants the raw HTML string).
  */
@@ -217,9 +217,9 @@ export interface PipelineOptions {
   workspace?: string;
   pageId?: string;
   /**
-   * #185 — resolved destination folder id for a NEW single-file upload. Threaded
+   * #185: resolved destination folder id for a NEW single-file upload. Threaded
    * into finalize as snake_case folder_id, and only on a new upload (a re-upload
-   * with pageId never moves — the server ignores folder_id then).
+   * with pageId never moves: the server ignores folder_id then).
    */
   folderId?: string;
   /**
@@ -282,12 +282,12 @@ function uploadRetryDelayMs(error: unknown, attempt: number): number {
 
 /**
  * UPLOAD-07 streamed pipeline. Used by `upload` and `update <id> <file>`:
- *   1. sign  — POST /api/upload/sign with filename/content_type/size_bytes
- *   2. PUT   — streaming PUT to Worker (uploads.sharedrop.cloud) with
+ *   1. sign: POST /api/upload/sign with filename/content_type/size_bytes
+ *   2. PUT: streaming PUT to Worker (uploads.sharedrop.cloud) with
  *              duplex: "half" and explicit Content-Length
- *   3. final — POST /api/upload/finalize with the object_key + token
+ *   3. final: POST /api/upload/finalize with the object_key + token
  *
- * Single locked path: no Buffer fallback, no fetch capability sniffing —
+ * Single locked path: no Buffer fallback, no fetch capability sniffing:
  * the engines.node >= 20.10.0 pin in packages/cli/package.json is the
  * executor's guarantee that streaming fetch with duplex: "half" is
  * available.
@@ -325,7 +325,7 @@ export async function uploadFileStreamed(
       }
       throw err;
     }
-    // Guard the single-file path against a directory — streaming a dir into the
+    // Guard the single-file path against a directory: streaming a dir into the
     // PUT body fails late with an opaque "fetch failed". `sharedrop upload <dir>`
     // routes folders to the bundle pipeline; `update` has no bundle path yet.
     if (stat.isDirectory()) {
@@ -337,7 +337,7 @@ export async function uploadFileStreamed(
     }
     size_bytes = stat.size;
     filename = basename(abs);
-    // Reject unsupported extensions client-side, before signing/PUT — otherwise
+    // Reject unsupported extensions client-side, before signing/PUT, otherwise
     // the file streams to storage and only fails at finalize with
     // `unsupported_file_type`, after burning bandwidth and quota checks.
     if (!isSupportedUpload(filename)) {
@@ -392,7 +392,7 @@ export async function uploadFileStreamed(
 
       return {
         url: result.url,
-        // #271 — the server's recipient URL (branded when the owner has a live
+        // #271: the server's recipient URL (branded when the owner has a live
         // custom domain) travels with the result to the formatter.
         ...(result.full_url ? { full_url: result.full_url } : {}),
         title: options.title ?? filename,
@@ -534,7 +534,7 @@ export async function uploadBundleStreamed(
   const absDir = resolvePath(dir);
   const { entries, skipped } = planBundleUpload(absDir, entry);
 
-  // Step 1 — one batch sign for the whole manifest (single rate-limit charge).
+  // Step 1: one batch sign for the whole manifest (single rate-limit charge).
   // On a re-upload (--page-id), pass page_id so sign exempts the page-count cap
   // (260703-pzs); bundle finalize re-checks the cap on its create branch.
   const signed = await client.signBundle({
@@ -548,7 +548,7 @@ export async function uploadBundleStreamed(
   });
   let resignCalls = 0;
 
-  // Step 2 — stream each file to its own signed Worker URL.
+  // Step 2: stream each file to its own signed Worker URL.
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
     let slot = signed.files[i];
@@ -598,7 +598,7 @@ export async function uploadBundleStreamed(
     if (lastError) throw lastError;
   }
 
-  // Step 3 — finalize the bundle into one page.
+  // Step 3: finalize the bundle into one page.
   const result = await client.finalizeBundle({
     files: entries.map((e, i) => ({
       path: e.refPath,
@@ -614,7 +614,7 @@ export async function uploadBundleStreamed(
 
   return {
     url: result.url,
-    // #271 — carry the server's recipient URL through so a bundle upload prints
+    // #271: carry the server's recipient URL through so a bundle upload prints
     // the owner's branded address when they have a live custom domain.
     ...(result.full_url ? { full_url: result.full_url } : {}),
     title: options.title ?? basename(absDir),
@@ -637,7 +637,7 @@ export function formatUploadResult(
   baseUrl: string,
   opts: { json?: boolean },
 ): string {
-  // #271 — the server owns the recipient address (branded when the owner has a
+  // #271: the server owns the recipient address (branded when the owner has a
   // live custom domain), so prefer its full_url. Fall back to baseUrl + the
   // relative path only for an older server that does not send one.
   const fullUrl =

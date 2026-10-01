@@ -1,4 +1,4 @@
-// #81 — CLI folder/bundle upload pipeline.
+// #81: CLI folder/bundle upload pipeline.
 //
 // Locks the batch flow (bundle/sign → PUT each file → bundle/finalize) for a
 // `sharedrop upload <dir>` and the local validation that replaces the old
@@ -29,7 +29,7 @@ function makeSite(files: Record<string, string>): string {
   return dir;
 }
 
-describe("sharedrop upload <dir> — bundle pipeline (#81)", () => {
+describe("sharedrop upload <dir>: bundle pipeline (#81)", () => {
   beforeEach(() => vi.restoreAllMocks());
   afterEach(() => vi.restoreAllMocks());
 
@@ -81,7 +81,7 @@ describe("sharedrop upload <dir> — bundle pipeline (#81)", () => {
     );
 
     // Regression guard (#mime_mismatch): the signed content_type must never
-    // carry a `; charset=…` parameter — the Worker compares the param-stripped
+    // carry a `; charset=…` parameter: the Worker compares the param-stripped
     // PUT header against the verbatim token claim, so charset → mime_mismatch.
     for (const f of signArg.files) {
       expect(f.content_type).not.toContain(";");

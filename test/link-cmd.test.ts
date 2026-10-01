@@ -1,4 +1,4 @@
-// #255 — `sharedrop link` commands: create (anyone / specific people), list,
+// #255, `sharedrop link` commands: create (anyone / specific people), list,
 // people, revoke. Auth resolution is mocked; client methods are spied on the
 // prototype so the request bodies the commands build are asserted exactly.
 
@@ -21,7 +21,7 @@ import {
 import { formatLinkCreated, formatLinkList } from "../src/output/format.js";
 import type { EphemeralLink } from "../src/client/types.js";
 
-const EM_DASH = "—";
+const EM_DASH = "\u2014";
 
 const sample: EphemeralLink = {
   id: "link-1",

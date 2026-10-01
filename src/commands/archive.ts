@@ -69,7 +69,7 @@ export interface ArchiveTransport {
     completeUrl: string,
     parts: Array<{ part_number: number; etag: string }>,
   ): Promise<ArchiveResult>;
-  /** AbortMultipartUpload — best-effort cleanup on failure so quota is released. */
+  /** AbortMultipartUpload: best-effort cleanup on failure so quota is released. */
   abort(abortUrl: string): Promise<void>;
   /** Progress callback: parts finished / total. */
   onProgress?(done: number, total: number): void;
@@ -144,7 +144,7 @@ async function runMultipartUpload(
   io: ArchiveTransport,
 ): Promise<ArchiveResult> {
   // The server may scale part_size up for pathologically large objects, so the
-  // offset math ALWAYS reads the plan's size — never a hardcoded default.
+  // offset math ALWAYS reads the plan's size, never a hardcoded default.
   const partSize = plan.part_size_bytes;
   const partCount = plan.part_count;
   const sleep = io.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -161,7 +161,7 @@ async function runMultipartUpload(
       if (batch.length === 0) continue;
 
       const signed = await io.signParts(plan.sign_parts_url, batch);
-      // `uploaded` is R2's full received-parts list on every response — merge it
+      // `uploaded` is R2's full received-parts list on every response: merge it
       // so a resumed run never re-PUTs a part R2 already has, in this batch or a later one.
       for (const u of signed.uploaded) {
         if (!collected.has(u.part_number)) collected.set(u.part_number, u.etag);
@@ -192,7 +192,7 @@ async function runMultipartUpload(
     return await io.complete(plan.complete_url, parts);
   } catch (err) {
     // Terminal failure or interrupt: abort so the quota reservation is released
-    // (server sweep cron is the backstop). Best-effort — never mask the cause.
+    // (server sweep cron is the backstop). Best-effort, never mask the cause.
     await io.abort(plan.abort_url).catch(() => {});
     throw err;
   }
@@ -213,7 +213,7 @@ async function uploadPartWithRetry(
       lastErr = err;
       if (!isRetryablePartFailure(err)) throw err;
       if (attempt < PART_MAX_ATTEMPTS) {
-        // 1s, 2s, 4s, 8s, 16s, 30s (capped) — survive a real outage, not just a hiccup.
+        // 1s, 2s, 4s, 8s, 16s, 30s (capped): survive a real outage, not just a hiccup.
         await sleep(retryDelayMs(err, attempt, PART_BACKOFF_CAP_MS));
       }
     }
@@ -307,7 +307,7 @@ export async function archiveCommand(
     }
 
     const filename = basename(abs);
-    // #207 (Fable #5) — --store-as-file stores ANY file as a download-only blob, so
+    // #207 (Fable #5): --store-as-file stores ANY file as a download-only blob, so
     // it bypasses the archive-extension check (the render-ceiling "store as file"
     // hand-off passes it). Without the flag, keep the fast client-side reject so a
     // typo fails before create.

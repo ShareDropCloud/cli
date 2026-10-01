@@ -7,8 +7,8 @@ import { resolveAuth, resolveBaseUrl } from "../auth/resolve.js";
 import { requireAuth, handleError } from "../output/errors.js";
 
 /**
- * #139 — `sharedrop download <id>` writes a page's artefact to disk.
- * #207 — the command is now kind-aware. A getPage round-trip reads the page kind,
+ * #139: `sharedrop download <id>` writes a page's artefact to disk.
+ * #207: the command is now kind-aware. A getPage round-trip reads the page kind,
  * then branches:
  *
  *   - archive kind → raw bytes via GET /api/archives/:id/download (302 to a
@@ -51,10 +51,10 @@ export async function downloadCommand(
     const page = await client.getPage(ref);
 
     if (page.kind === "archive") {
-      // #207 — pass the resolved page.id (a UUID), NOT the raw ref: the archive
+      // #207: pass the resolved page.id (a UUID), NOT the raw ref: the archive
       // download route looks the page up by id, so a slug ref would be compared to
       // a uuid column and 500 (Fable #9). Stream the body straight through instead
-      // of buffering — a 10 GB archive must never sit in memory.
+      // of buffering: a 10 GB archive must never sit in memory.
       const res = await client.openArchiveDownload(page.id);
       const body = Readable.fromWeb(res.body as import("node:stream/web").ReadableStream);
 

@@ -2,7 +2,7 @@ import chalk from "chalk";
 import { shouldOutputJson, type FormatOptions } from "../output/format.js";
 
 /**
- * Canonical "why sharedrop" blurb. No auth, no network — pure positioning so an
+ * Canonical "why sharedrop" blurb. No auth, no network: pure positioning so an
  * agent that runs `sharedrop about` (or a human reading --help) learns what the
  * platform is for and where the docs / llms.txt / pricing live. Keep the copy in
  * sync with public/llms.txt and the marketing voice (lowercase "sharedrop").

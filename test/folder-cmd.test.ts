@@ -1,4 +1,4 @@
-// #185 Phase 4 (24-03) — CLI folder command group + formatters.
+// #185 Phase 4 (24-03): CLI folder command group + formatters.
 //
 // Covers arg/option threading (create/list/delete/restore), the 409 counts
 // refusal path, --force, the buildFolderRows tree reduction, and the em-dash
@@ -54,13 +54,13 @@ import {
   formatRestore,
 } from "../src/output/format.js";
 
-const EM_DASH = "—";
+const EM_DASH = "\u2014";
 
 function silenceLog() {
   return vi.spyOn(console, "log").mockImplementation(() => {});
 }
 
-describe("folder commands — arg/option threading", () => {
+describe("folder commands: arg/option threading", () => {
   beforeEach(() => vi.restoreAllMocks());
   afterEach(() => vi.restoreAllMocks());
 
@@ -344,7 +344,7 @@ describe("folder commands — arg/option threading", () => {
   });
 });
 
-describe("buildFolderRows — tree reduction", () => {
+describe("buildFolderRows: tree reduction", () => {
   const pages = [
     { id: "f_root", title: "reports", nodeType: "folder" as const, parentId: null, path: "/f_root" },
     { id: "f_child", title: "2026", nodeType: "folder" as const, parentId: "f_root", path: "/f_root/f_child" },
@@ -583,7 +583,7 @@ describe("FOLDERS_RESTRICTED error rendering", () => {
   });
 });
 
-describe("folder formatters — em-dash copy rule", () => {
+describe("folder formatters: em-dash copy rule", () => {
   it("no folder formatter emits an em dash in human (TTY) output", () => {
     const prev = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
     Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });

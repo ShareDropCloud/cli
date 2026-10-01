@@ -1,9 +1,9 @@
-// Phase 31 / RES-ME-1 — CLI shared reservation plumbing.
+// Phase 31 / RES-ME-1: CLI shared reservation plumbing.
 //
 // Locks two contracts:
 //   1. signUpload carries an optional reservation_id into the /api/upload/sign
 //      JSON body (present when set, absent when omitted) with zero method-body
-//      change — the field flows through JSON.stringify(params).
+//      change: the field flows through JSON.stringify(params).
 //   2. formatWhoami renders a reserved-addresses line only when the server
 //      advertises the reservations entitlement, degrading silently against
 //      older servers, and renders the -1 cap as "unlimited". No em dashes.
@@ -32,7 +32,7 @@ function signOkResponse(): Response {
   );
 }
 
-describe("signUpload — reservation_id passthrough (RES-ME-1)", () => {
+describe("signUpload: reservation_id passthrough (RES-ME-1)", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -74,7 +74,7 @@ describe("signUpload — reservation_id passthrough (RES-ME-1)", () => {
   });
 });
 
-describe("formatWhoami — reserved-addresses line (RES-ME-1)", () => {
+describe("formatWhoami: reserved-addresses line (RES-ME-1)", () => {
   // formatWhoami emits JSON when stdout is not a TTY (shouldOutputJson). Force
   // TTY so the human-readable line rendering is exercised.
   const originalIsTTY = process.stdout.isTTY;
@@ -159,6 +159,6 @@ describe("formatWhoami — reserved-addresses line (RES-ME-1)", () => {
       },
     };
     const out = formatWhoami(me, "https://app.example.com", { json: false });
-    expect(out.includes("—")).toBe(false);
+    expect(out.includes("\u2014")).toBe(false);
   });
 });

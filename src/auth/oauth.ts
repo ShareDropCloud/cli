@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import open from "open";
 
 /**
- * Clerk OAuth (Authorization Code + PKCE) login for the CLI — the default
+ * Clerk OAuth (Authorization Code + PKCE) login for the CLI: the default
  * `sharedrop login`. Clerk is the authorization server; we discover its
  * endpoints from the app's `/.well-known/oauth-authorization-server` mirror so
  * the same code targets prod or staging by base URL alone.
@@ -11,9 +11,9 @@ import open from "open";
  * Verified behaviour (2026-05-30): a dynamically-registered PUBLIC client
  * (token_endpoint_auth_method=none, PKCE) receives a working refresh token when
  * `offline_access` is requested. Access tokens last 24h; refresh tokens don't
- * expire and rotate on use — so once logged in, the CLI auto-refreshes and the
+ * expire and rotate on use, so once logged in, the CLI auto-refreshes and the
  * user effectively never logs in again. (The DCR registration response echoes
- * only grant_types:["authorization_code"] — that is a red herring; the refresh
+ * only grant_types:["authorization_code"], that is a red herring; the refresh
  * token is still issued at the token endpoint.)
  */
 

@@ -34,7 +34,7 @@ export async function updateCommand(
       // Re-upload via the streamed pipeline targeting the existing page_id.
       // The finalize endpoint accepts a `page_id` so the slug/URL stay stable.
       await uploadFileStreamed(client, file, {
-        // No `--title` on an update means "keep the current title" — replacing
+        // No `--title` on an update means "keep the current title": replacing
         // content shouldn't rename the page. Sending the filename stem here forced
         // a rename; leaving it undefined lets the server preserve the existing title.
         title: opts.title,

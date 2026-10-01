@@ -1,4 +1,4 @@
-// #296 — `sharedrop fetch` wire contract: an ordinary page mints a fetch_url and
+// #296, `sharedrop fetch` wire contract: an ordinary page mints a fetch_url and
 // returns its raw bytes; an archive surfaces the server's typed
 // ARCHIVE_DOWNLOAD_REQUIRED; an unknown ref is a typed 404 (exit 5), never
 // INTERNAL_ERROR.

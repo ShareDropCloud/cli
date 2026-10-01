@@ -1,4 +1,4 @@
-// #185 Phase 4 (24-03) — CLI api-client folder methods.
+// #185 Phase 4 (24-03): CLI api-client folder methods.
 //
 // The folder / trash / move / tree routes return FLAT bodies ({ folder },
 // { pages }, { items }, { success, pages, folders }, 409 { error, pages,
@@ -35,7 +35,7 @@ function errResponse(body: unknown, status: number) {
   };
 }
 
-describe("SharedropApiClient — folder methods (flat-body, Bearer)", () => {
+describe("SharedropApiClient: folder methods (flat-body, Bearer)", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });

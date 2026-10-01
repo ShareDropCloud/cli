@@ -1,4 +1,4 @@
-// #191 — top-level `move <id>`: move a PAGE into a folder or back to your top
+// #191, top-level `move <id>`: move a PAGE into a folder or back to your top
 // level. A page reparent goes through the same `movePage` (PUT /api/pages/:id)
 // spine the dashboard + MCP use; --folder resolves a uuid directly or walks/
 // auto-creates a slash path (mirrors `upload --folder`), --root sends null.

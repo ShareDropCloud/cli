@@ -3,7 +3,7 @@ export interface V1Page {
   slug: string;
   title: string;
   mode: string;
-  // #207 — page kind (e.g. "archive", "html", "doc"). Optional: older servers
+  // #207: page kind (e.g. "archive", "html", "doc"). Optional: older servers
   // omit it, in which case the CLI treats the page as the non-archive zip path.
   kind?: string;
   file_size: number;
@@ -15,7 +15,7 @@ export interface V1Page {
 }
 
 /**
- * #366 — set when the account's daily share-email limit (Free 10, Pro 500, Team 2000)
+ * #366: set when the account's daily share-email limit (Free 10, Pro 500, Team 2000)
  * stopped an invite email. The share or link itself still succeeded.
  */
 export interface EmailWarning {
@@ -37,7 +37,7 @@ export interface V1ShareGrant {
 // Typed from serializeReservation (lib/pages/serializers.ts): the enveloped v1
 // shape returned by GET/POST /api/v1/reservations and the revoke route. status
 // is one of reserved | claimed | expired | revoked. claim_token is NOT part of
-// this shape — it is a one-time SIBLING field on the 201 create response only.
+// this shape, it is a one-time SIBLING field on the 201 create response only.
 
 export interface Reservation {
   id: string;
@@ -125,7 +125,7 @@ export type BillingErrorCode =
   | "STORAGE_LIMIT"
   | "SEAT_LIMIT"
   | "FILE_SIZE_EXCEEDED"
-  // #334 — the billing-lock write refusal. Deliberately NOT in the client's
+  // #334: the billing-lock write refusal. Deliberately NOT in the client's
   // BILLING_CODES set: it is not a capacity error and there is nothing to
   // upsell, so it renders through the plain `code` + `message` path instead of
   // the envelope block. Listed here to keep the union in sync with the server.
@@ -147,7 +147,7 @@ export interface BillingErrorEnvelope {
     code: BillingErrorCode;
     message: string;
     currentTier: "free" | "pro" | "team";
-    /** Set only for TIER_LIMIT — the tier the caller must upgrade to. */
+    /** Set only for TIER_LIMIT: the tier the caller must upgrade to. */
     requiredTier?: "pro" | "team";
     /** Set only for STORAGE_LIMIT. */
     currentUsageGb?: number;
@@ -157,11 +157,11 @@ export interface BillingErrorEnvelope {
     capGb?: number;
     /** Set only for SEAT_LIMIT. */
     currentSeats?: number;
-    /** Set only for FILE_SIZE_EXCEEDED — the tier's per-file cap in bytes. */
+    /** Set only for FILE_SIZE_EXCEEDED: the tier's per-file cap in bytes. */
     limitBytes?: number;
-    /** Set only for FILE_SIZE_EXCEEDED — the size the client tried to upload. */
+    /** Set only for FILE_SIZE_EXCEEDED: the size the client tried to upload. */
     requestedBytes?: number;
-    /** Set only for paid-tier STORAGE_LIMIT — the recommended add-on block (GB). */
+    /** Set only for paid-tier STORAGE_LIMIT: the recommended add-on block (GB). */
     recommendedAddonGb?: 25 | 250 | 1024;
     upgradeUrl: string;
     pricing: PricingBlock;
@@ -181,7 +181,7 @@ export interface V1MeResponse {
   pages_used: number;
   pages_limit: number;
   storage_used: number;
-  // Phase 12 / AGENT-04 additive fields — optional so older servers don't break.
+  // Phase 12 / AGENT-04 additive fields: optional so older servers don't break.
   entitlements?: {
     maxFileSizeBytes: number;
     // #360: the lower per-file limit for HTML, other text files and SVG.
@@ -191,9 +191,9 @@ export interface V1MeResponse {
     maxArchiveBytes?: number;
     allowedVisibilities: string[];
     maxVersionRetention: number;
-    // #185 — folders capability (catch-up for the shipped Phase 24 field).
+    // #185: folders capability (catch-up for the shipped Phase 24 field).
     folders?: boolean;
-    // #198 (RES-ME-1) — reserved-addresses capability. Optional so older
+    // #198 (RES-ME-1): reserved-addresses capability. Optional so older
     // servers that predate the field render exactly the prior whoami output.
     reservations?: {
       enabled: boolean;

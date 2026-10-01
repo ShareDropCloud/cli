@@ -1,4 +1,4 @@
-// #198 Phase 31 (31-03) Tasks 2 & 3 — reserve verb, reservations group,
+// #198 Phase 31 (31-03) Tasks 2 & 3: reserve verb, reservations group,
 // formatters, and the drop/upload --to claim ergonomics.
 //
 // Auth resolution is mocked so the commands build a client without touching
@@ -32,7 +32,7 @@ import {
 } from "../src/output/format.js";
 import type { Reservation } from "../src/client/types.js";
 
-const EM_DASH = "—";
+const EM_DASH = "\u2014";
 
 const sampleReservation: Reservation = {
   id: "rsv_1",
@@ -71,7 +71,7 @@ function forceTTY(): (() => void) {
   };
 }
 
-describe("reserveCommand — create + one-time token reveal", () => {
+describe("reserveCommand: create + one-time token reveal", () => {
   beforeEach(() => vi.restoreAllMocks());
   afterEach(() => vi.restoreAllMocks());
 
@@ -125,7 +125,7 @@ describe("reserveCommand — create + one-time token reveal", () => {
   });
 });
 
-describe("reservationsListCommand — table, no token leak", () => {
+describe("reservationsListCommand: table, no token leak", () => {
   beforeEach(() => vi.restoreAllMocks());
   afterEach(() => vi.restoreAllMocks());
 
@@ -200,7 +200,7 @@ describe("reservationsRevokeCommand", () => {
   });
 });
 
-describe("resolveReservationTarget — slug vs id resolution (Task 3)", () => {
+describe("resolveReservationTarget: slug vs id resolution (Task 3)", () => {
   beforeEach(() => vi.restoreAllMocks());
   afterEach(() => vi.restoreAllMocks());
 
@@ -263,7 +263,7 @@ describe("resolveReservationTarget — slug vs id resolution (Task 3)", () => {
   });
 });
 
-describe("upload --to — reservation claim threading (Task 3)", () => {
+describe("upload --to: reservation claim threading (Task 3)", () => {
   beforeEach(() => vi.restoreAllMocks());
   afterEach(() => vi.restoreAllMocks());
 
@@ -340,7 +340,7 @@ describe("uploadCommand --to conflict guards (WR-03)", () => {
   });
 });
 
-describe("reservation formatters — em-dash copy rule", () => {
+describe("reservation formatters: em-dash copy rule", () => {
   it("no reservation formatter emits an em dash in human (TTY) output", () => {
     const restore = forceTTY();
     try {
