@@ -16,9 +16,14 @@ export const EXIT_CODES = {
   PAYMENT_REQUIRED: 7,
 } as const;
 
+/**
+ * #383: a server 401 means the API token was rejected (invalid, revoked, or an
+ * OAuth session that failed after its refresh), so it exits 3 like a 403.
+ * Exit 2 is kept for "no token found locally" (requireAuth).
+ */
 export function statusToExitCode(status: number): number {
   switch (status) {
-    case 401: return EXIT_CODES.AUTH_REQUIRED;
+    case 401: return EXIT_CODES.AUTH_FAILED;
     case 402: return EXIT_CODES.PAYMENT_REQUIRED;
     case 403: return EXIT_CODES.AUTH_FAILED;
     case 429: return EXIT_CODES.RATE_LIMITED;
@@ -108,7 +113,15 @@ function renderEnvelope(env: BillingErrorEnvelope["error"]): string {
 
 export function handleError(error: unknown, opts: FormatOptions): never {
   if (error instanceof SharedropApiError) {
-    const exitCode = statusToExitCode(error.status);
+    // #383: TOKEN_EXPIRED is the single-use upload token (5 minute window), not
+    // the API token, so it is not an auth failure: running the command again
+    // signs a fresh one. Exit 1 instead of the 401 mapping.
+    const exitCode =
+      error.code === "TOKEN_EXPIRED" ? EXIT_CODES.ERROR : statusToExitCode(error.status);
+    const retryAfterSeconds =
+      error.response?.retryAfterMs !== undefined
+        ? Math.ceil(error.response.retryAfterMs / 1000)
+        : undefined;
     // #191: free-tier folder commands (create / move) 403 with
     // FOLDERS_RESTRICTED. Surface the server reason plus an upgrade link instead
     // of a bare `Error:` line. JSON mode falls through to the structured branch
@@ -139,6 +152,9 @@ export function handleError(error: unknown, opts: FormatOptions): never {
               ...(error.response?.retryable !== undefined
                 ? { retryable: error.response.retryable }
                 : {}),
+              ...(retryAfterSeconds !== undefined
+                ? { retry_after_seconds: retryAfterSeconds }
+                : {}),
             },
           },
           null,
@@ -149,6 +165,13 @@ export function handleError(error: unknown, opts: FormatOptions): never {
       console.error(chalk.red(`Error: ${error.message}`));
       if (error.response?.reason && error.response.reason !== error.message) {
         console.error(`Reason: ${error.response.reason}`);
+      }
+      if (error.response?.retryable === true) {
+        console.error(
+          retryAfterSeconds !== undefined
+            ? `Retryable: yes, try again in ${retryAfterSeconds}s`
+            : "Retryable: yes",
+        );
       }
       if (error.response?.requestId) {
         console.error(`Request ID: ${error.response.requestId}`);

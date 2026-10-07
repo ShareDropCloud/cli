@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { uploadCommand } from "./commands/upload.js";
+import { checkCommand } from "./commands/check.js";
 import { archiveCommand } from "./commands/archive.js";
 import { listCommand } from "./commands/list.js";
 import { getCommand } from "./commands/get.js";
@@ -46,11 +47,14 @@ program
   .alias("drop")
   .description(
     "Upload a file (use - for stdin) or a folder. Files: HTML, MHTML, Markdown, PDF, images. " +
-      "A folder uploads as a multi-file bundle (entry HTML + relative css/js/image/font assets). Use --mode interactive to keep its JavaScript.",
+      "A folder uploads as a multi-file bundle (entry HTML + relative css/js/image/font assets).",
   )
   .option("--title <title>", "Page title (auto-detected if omitted)")
   .option("--visibility <vis>", "Page visibility: public, private, shared", "private")
-  .option("--mode <mode>", "Page mode (HTML only): static, interactive", "static")
+  .option(
+    "--mode <mode>",
+    "Page mode (HTML only): static, interactive. Default: your account default for a new page (interactive unless changed); a re-upload keeps the page's mode",
+  )
   .option("--entry <file>", "Entry HTML for a folder upload (relative to the folder)", "index.html")
   .option("--workspace <id>", "Upload to workspace")
   .option("--page-id <id>", "Replace an existing page's content (keeps the same URL) instead of creating a new page")
@@ -58,6 +62,20 @@ program
   .option("--to <slug|id>", "Claim a reserved address created with sharedrop reserve (single file uploads only)")
   .option("--json", "Force JSON output")
   .action((path, opts) => uploadCommand(path, opts, program.opts()));
+
+program
+  .command("check <path>")
+  .description(
+    "Run the real upload checks on a file or folder without publishing: what would be removed, " +
+      "blocked or moved, the effective mode, size, and pages with the same title. Exits 1 when the upload would change anything.",
+  )
+  .option("--mode <mode>", "Check as this mode: static, interactive (default: what upload would use)")
+  .option("--page-id <id>", "Check as a re-upload of this page (uses its mode)")
+  .option("--slides", "Check a single HTML file as a slide deck")
+  .option("--entry <file>", "Entry HTML for a folder (relative to the folder)", "index.html")
+  .option("--workspace <id>", "Check as an upload to this workspace")
+  .option("--json", "Force JSON output")
+  .action((path, opts) => checkCommand(path, opts, program.opts()));
 
 program
   .command("archive <file>")
@@ -116,11 +134,11 @@ program
 
 program
   .command("update <id> [file]")
-  .description("Update a page: pass a file to replace its content (keeps the same URL), and/or set metadata")
+  .description("Update a page: pass a file or folder to replace its content (keeps the same URL), and/or set metadata")
   .option("--title <title>", "New title")
   .option("--slug <slug>", "New readable address (Pro, public pages only). The old address redirects.")
   .option("--visibility <vis>", "New visibility: public, private, shared")
-  .option("--mode <mode>", "Page mode when replacing content: static, interactive")
+  .option("--mode <mode>", "Page mode when replacing content: static, interactive (default: keep the page's mode)")
   .option("--json", "Force JSON output")
   .action((id, file, opts) => updateCommand(id, file, opts, program.opts()));
 

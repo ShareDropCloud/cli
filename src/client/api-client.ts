@@ -78,6 +78,18 @@ function errorResponseDetails(res: Response, body: unknown): SharedropApiErrorRe
   };
 }
 
+/**
+ * #383: finalize answers 401 with code "upload_token_invalid" when the
+ * short-lived upload token fails verification, and 401 "Unauthorized" (no
+ * code) when the API token is rejected. Older servers send only the
+ * "Invalid token" text, so that stays as the fallback.
+ */
+function uploadTokenRejected(status: number, body: unknown): boolean {
+  if (status !== 401 || !body || typeof body !== "object") return false;
+  const b = body as { error?: unknown; code?: unknown };
+  return b.code === "upload_token_invalid" || b.error === "Invalid token";
+}
+
 // ─── UPLOAD-07 streamed-upload types ──────────────────────────────────────
 
 export interface SignUploadParams {
@@ -109,7 +121,8 @@ export interface FinalizeUploadParams {
   title?: string;
   visibility?: "public" | "private" | "shared";
   mode?: "static" | "interactive";
-  workspace?: string;
+  /** Finalize reads workspace_id (sign reads workspace); it must match the token's scope. */
+  workspace_id?: string;
   page_id?: string;
   /**
    * #185: destination folder for a NEW upload (snake_case; the finalize route
@@ -126,7 +139,40 @@ export interface SanitiserWarning {
   message: string;
 }
 
-export interface FinalizeUploadResponse {
+/**
+ * #383: the top-level `warnings` array on finalize (and lint) carries the
+ * sanitiser codes plus `images_extracted` and `external_refs_block_scripts`.
+ */
+export interface UploadWarning {
+  code: SanitiserWarning["code"] | "images_extracted" | "external_refs_block_scripts";
+  detail: string;
+  count: number;
+  message: string;
+}
+
+/** #383: an existing page with the same title, sent only for a new page. */
+export interface SameTitlePage {
+  id: string;
+  full_url: string;
+  updated_at: string;
+}
+
+/**
+ * #383 fields shared by single and bundle finalize. Optional because an older
+ * server omits them; the CLI fills `warnings` and `was_reupload` itself then.
+ */
+export interface FinalizeResultFields {
+  title?: string;
+  was_reupload?: boolean;
+  version?: number;
+  scripts_will_run?: boolean;
+  external_resource_hosts?: string[];
+  warnings?: UploadWarning[];
+  /** Present only on the new-page branch. */
+  same_title_pages?: SameTitlePage[];
+}
+
+export interface FinalizeUploadResponse extends FinalizeResultFields {
   url: string;
   /** #271, absolute recipient URL from the server: the owner's branded share
    *  hostname when they have a live custom domain and the page is eligible,
@@ -139,6 +185,50 @@ export interface FinalizeUploadResponse {
   kind: string;
   contentType: string;
   sanitiser_warnings?: SanitiserWarning[];
+}
+
+// ─── #383 pre-check (lint) types ──────────────────────────────────────────
+
+/**
+ * POST /api/upload/lint body: the single finalize body's upload-token fields
+ * plus the options that change the result. Lint never publishes.
+ */
+export interface LintUploadParams {
+  object_key: string;
+  upload_token: string;
+  title?: string;
+  mode?: "static" | "interactive";
+  workspace_id?: string;
+  page_id?: string;
+  slides?: boolean;
+}
+
+/** POST /api/upload/bundle/lint body: the bundle finalize body's file fields. */
+export interface LintBundleParams {
+  files: Array<{ path: string; object_key: string; upload_token: string }>;
+  title?: string;
+  mode?: "static" | "interactive";
+  workspace_id?: string;
+  page_id?: string;
+}
+
+/** 200 response from either lint endpoint (bundle lint adds `files`). */
+export interface LintResponse {
+  kind: string;
+  mode_effective: string;
+  detected_slides: boolean;
+  size_ok: boolean;
+  size_bytes: number;
+  size_limit_bytes: number;
+  title: string;
+  warnings: UploadWarning[];
+  images_extracted: number;
+  external_resource_hosts: string[];
+  scripts_would_run: boolean;
+  same_title_pages: SameTitlePage[];
+  would_change: boolean;
+  /** Bundle lint only: number of files in the bundle. */
+  files?: number;
 }
 
 // ─── Bundle (folder) upload types: Epic 2 / #81, #90 ─────────────────────
@@ -169,9 +259,14 @@ export interface FinalizeBundleParams {
   mode?: "static" | "interactive";
   workspace_id?: string;
   page_id?: string;
+  /**
+   * #383: destination folder for a NEW bundle, same rules as single finalize's
+   * folder_id (owned live folder, Pro gate). Not sent on a re-upload.
+   */
+  folder_id?: string;
 }
 
-export interface FinalizeBundleResponse {
+export interface FinalizeBundleResponse extends FinalizeResultFields {
   url: string;
   /** #271: absolute recipient URL from the server (branded when the owner has
    *  a live custom domain). Older servers omit it. */
@@ -746,8 +841,10 @@ export class SharedropApiClient {
         typeof (body as { error?: unknown }).error === "string"
           ? (body as { error: string }).error
           : res.statusText;
+      // A Worker 401 rejects the upload token (it never sees the API token),
+      // so it is TOKEN_EXPIRED, not an auth failure (#383).
       throw new SharedropApiError(
-        "UPLOAD_FAILED",
+        res.status === 401 ? "TOKEN_EXPIRED" : "UPLOAD_FAILED",
         message,
         res.status,
         undefined,
@@ -791,8 +888,11 @@ export class SharedropApiClient {
         );
       }
       const msg = typeof errField === "string" ? errField : res.statusText;
-      // 401 from finalize = expired upload window: surface a distinct code.
-      const code = res.status === 401 ? "TOKEN_EXPIRED" : "FINALIZE_FAILED";
+      // 401 from finalize is either the upload token (code "upload_token_invalid",
+      // or "Invalid token" on older servers: expired upload window) or the API
+      // token itself ("Unauthorized"). Only the first
+      // is TOKEN_EXPIRED; the second keeps the 401 auth-failure exit (#383).
+      const code = uploadTokenRejected(res.status, body) ? "TOKEN_EXPIRED" : "FINALIZE_FAILED";
       throw new SharedropApiError(
         code,
         msg,
@@ -817,7 +917,7 @@ export class SharedropApiClient {
 
   private async throwFlatUploadError(
     res: Response,
-    fallbackCode: string,
+    fallbackCode: string | ((body: unknown) => string),
   ): Promise<never> {
     const body = (await res.json().catch(() => ({}))) as
       | { error: { code: string; message: string } | string }
@@ -839,7 +939,7 @@ export class SharedropApiClient {
     }
     const msg = typeof errField === "string" ? errField : res.statusText;
     throw new SharedropApiError(
-      fallbackCode,
+      typeof fallbackCode === "function" ? fallbackCode(body) : fallbackCode,
       msg,
       res.status,
       undefined,
@@ -877,13 +977,48 @@ export class SharedropApiClient {
       body: JSON.stringify(params),
     });
     if (!res.ok) {
-      // 401 from finalize = expired upload window: surface a distinct code.
-      await this.throwFlatUploadError(
-        res,
-        res.status === 401 ? "TOKEN_EXPIRED" : "BUNDLE_FINALIZE_FAILED",
+      // 401 "upload_token_invalid" = expired upload window: surface a distinct code.
+      // An "Unauthorized" 401 is the API token and keeps the fallback (#383).
+      await this.throwFlatUploadError(res, (body) =>
+        uploadTokenRejected(res.status, body) ? "TOKEN_EXPIRED" : "BUNDLE_FINALIZE_FAILED",
       );
     }
     return (await res.json()) as FinalizeBundleResponse;
+  }
+
+  // ─── #383 pre-check (lint) ──────────────────────────────────────────────
+  //
+  // Same body and error handling as finalize, but the server runs the real
+  // checks, deletes the quarantine copy and publishes nothing.
+
+  async lintUpload(params: LintUploadParams): Promise<LintResponse> {
+    return this.postLint("/api/upload/lint", params, "LINT_FAILED");
+  }
+
+  async lintBundle(params: LintBundleParams): Promise<LintResponse> {
+    return this.postLint("/api/upload/bundle/lint", params, "BUNDLE_LINT_FAILED");
+  }
+
+  private async postLint(
+    path: string,
+    params: LintUploadParams | LintBundleParams,
+    fallbackCode: string,
+  ): Promise<LintResponse> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method: "POST",
+      signal: jsonRequestSignal(),
+      headers: {
+        "Authorization": `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      await this.throwFlatUploadError(res, (body) =>
+        uploadTokenRejected(res.status, body) ? "TOKEN_EXPIRED" : fallbackCode,
+      );
+    }
+    return (await res.json()) as LintResponse;
   }
 
   // ─── #207 archive (large-artifact) multipart pipeline ─────────────────────

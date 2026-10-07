@@ -136,7 +136,10 @@ describe("sharedrop upload <dir>: bundle pipeline (#81)", () => {
     });
 
     const out = await uploadBundleStreamed(client, dir, "index.html", {});
-    expect(out.skipped.sort()).toEqual([".DS_Store", "README.md"]);
+    expect(out.skipped.sort((a, b) => a.path.localeCompare(b.path))).toEqual([
+      { path: ".DS_Store", reason: "hidden file" },
+      { path: "README.md", reason: "unsupported file type" },
+    ]);
   });
 
   it("retries only a transiently failed bundle member with fresh coordinates", async () => {

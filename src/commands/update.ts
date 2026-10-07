@@ -4,7 +4,14 @@ import { normalizePageRef } from "../client/page-ref.js";
 import { resolveAuth, resolveBaseUrl } from "../auth/resolve.js";
 import { requireAuth, handleError, EXIT_CODES } from "../output/errors.js";
 import { formatPage, isTTY, shouldOutputJson } from "../output/format.js";
-import { uploadFileStreamed } from "./upload.js";
+import {
+  formatUploadResult,
+  isDirectory,
+  reportSkipped,
+  uploadBundleStreamed,
+  uploadFileStreamed,
+  type UploadResult,
+} from "./upload.js";
 
 export async function updateCommand(
   id: string,
@@ -29,33 +36,48 @@ export async function updateCommand(
     const client = new SharedropApiClient({ apiKey: auth.token, baseUrl });
     const ref = normalizePageRef(id);
 
-    let page;
     if (file) {
-      // Re-upload via the streamed pipeline targeting the existing page_id.
-      // The finalize endpoint accepts a `page_id` so the slug/URL stay stable.
-      await uploadFileStreamed(client, file, {
+      // Re-upload via the streamed pipeline targeting the existing page_id, so
+      // the slug/URL stay stable. A folder goes through the bundle pipeline.
+      const pipelineOpts = {
         // No `--title` on an update means "keep the current title": replacing
         // content shouldn't rename the page. Sending the filename stem here forced
         // a rename; leaving it undefined lets the server preserve the existing title.
         title: opts.title,
         mode: opts.mode as "static" | "interactive" | undefined,
         pageId: ref,
-      });
-      // Pull the latest page row for display + optional visibility update.
-      page = await client.getPage(ref);
+      };
+      let result: UploadResult = file !== "-" && isDirectory(file)
+        ? await uploadBundleStreamed(client, file, "index.html", pipelineOpts)
+        : await uploadFileStreamed(client, file, pipelineOpts);
       if (opts.slug || opts.visibility) {
-        page = await client.updatePage(ref, {
+        const page = await client.updatePage(ref, {
           ...(opts.slug ? { slug: opts.slug } : {}),
           ...(opts.visibility ? { visibility: opts.visibility } : {}),
         });
+        result = {
+          ...result,
+          url: page.url,
+          full_url: page.full_url,
+          visibility: page.visibility,
+        };
       }
-    } else {
-      const updates: { title?: string; slug?: string; visibility?: string } = {};
-      if (opts.title) updates.title = opts.title;
-      if (opts.slug) updates.slug = opts.slug;
-      if (opts.visibility) updates.visibility = opts.visibility;
-      page = await client.updatePage(ref, updates);
+
+      // #383: print the re-upload result (version, warnings and all), the same
+      // shape as `upload`, instead of a page fetch that dropped the warnings.
+      if (isTTY() && !shouldOutputJson(opts)) {
+        console.log(chalk.green("Updated"));
+      }
+      console.log(formatUploadResult(result, baseUrl, opts));
+      reportSkipped(result.skipped ?? [], opts);
+      return;
     }
+
+    const updates: { title?: string; slug?: string; visibility?: string } = {};
+    if (opts.title) updates.title = opts.title;
+    if (opts.slug) updates.slug = opts.slug;
+    if (opts.visibility) updates.visibility = opts.visibility;
+    const page = await client.updatePage(ref, updates);
 
     if (isTTY() && !shouldOutputJson(opts)) {
       console.log(chalk.green("Updated"));

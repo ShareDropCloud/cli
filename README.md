@@ -74,12 +74,13 @@ Linux `~/.config/sharedrop-nodejs/`, Windows `%APPDATA%\sharedrop-nodejs\`.
 
 ```bash
 sharedrop upload <file>     # Upload a file (HTML, image, PDF, MHTML, Markdown, or - for stdin)
+sharedrop check <path>      # Run the upload checks on a file or folder without publishing
 sharedrop list              # List your pages (shows the ID column)
 sharedrop search <query>    # Find pages by title, slug, id, or file type (e.g. "jpeg")
 sharedrop get <ref>         # Show page details (ref is an id, slug, or URL)
 sharedrop fetch <ref>       # Pull a page's RAW content (stdout by default, or -o file)
 sharedrop download <ref>    # Download a page's full artefact as a ZIP (root + all assets)
-sharedrop update <ref> [file]  # Re-upload content (same URL, new version) and/or update title/visibility
+sharedrop update <ref> [file|folder]  # Re-upload content (same URL, new version) and/or update title/visibility
 sharedrop reserve [options] # Reserve an address before the first upload
 sharedrop delete <ref>      # Delete a page
 sharedrop share <ref> --email someone@example.com   # Share with a person
@@ -107,12 +108,23 @@ sharedrop upload report.html --page-id <id>     # replace an existing page (same
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--title <title>` | auto | Page title (auto-detected from HTML `<title>` or document metadata if omitted) |
+| `--title <title>` | see description | Page title. A new single file takes its file name without the extension; stdin (`-`) and folders take the HTML `<title>` (a folder's entry file); `--page-id` keeps the current title |
 | `--visibility <vis>` | `private` | `public`, `private`, or `shared` |
-| `--mode <mode>` | `static` | `static` or `interactive` (HTML only; ignored for image/PDF/Markdown/MHTML) |
+| `--mode <mode>` | see below | `static` or `interactive` (HTML only; ignored for image/PDF/Markdown/MHTML) |
 | `--workspace <id>` | None | Upload into a workspace |
 | `--page-id <id>` | None | Replace an existing page's content (keeps the same URL) instead of creating a new page |
+| `--folder <id\|path>` | top level | (Pro) File a new page or folder bundle into a folder |
 | `--json` | None | Force machine-readable JSON output |
+
+**Which mode a page gets:**
+
+| You run | Mode |
+|---------|------|
+| `upload` with no `--mode` (new page) | Your account's default upload mode: `interactive` unless you changed it in settings |
+| `upload --page-id` or `update` with no `--mode` | The page keeps its current mode |
+| `--mode static` or `--mode interactive` | That mode |
+
+The result always says which mode the page got (`Mode:` in the terminal, `data.mode` in JSON).
 
 **Pages are private by default.** A page uploaded with no `--visibility` flag is only
 viewable by you until you publish it (`--visibility public`) or share it.
@@ -128,7 +140,27 @@ across all its files together.
 **Interactive HTML must be self-contained.** Interactive pages run JavaScript in a
 local-only sandbox; if the page references anything external (CDN scripts, web fonts,
 remote images, external APIs), sharedrop disables all of its JavaScript and serves it
-static. Inline your CSS/JS/data, or use `--mode static` for script-less documents.
+static. Inline your CSS/JS/data, or use `--mode static` for script-less documents. The upload
+result says whether scripts will run (`data.scripts_will_run`) and lists the external hosts it
+found (`data.external_resource_hosts`); `sharedrop check` tells you before you publish.
+
+### check
+
+```bash
+sharedrop check report.html            # exit 0: publishes as-is; exit 1: something would change
+sharedrop check ./site --json          # a folder bundle
+sharedrop check deck.html --slides     # as a slide deck
+sharedrop check report.html --page-id <id>   # as a re-upload of that page
+sharedrop check report.html --workspace <id> # as an upload to that workspace
+```
+
+`check` streams the file to quarantine like `upload`, runs the server's real checks (sanitiser,
+inline image extraction, slides detection, size limit, external hosts), then deletes the copy.
+Nothing is published and no page slot is used. JSON output is `{ "data": { kind, mode_effective,
+detected_slides, size_ok, size_bytes, size_limit_bytes, title, warnings, images_extracted,
+external_resource_hosts, scripts_would_run, same_title_pages, would_change } }` (a folder adds
+`files`). It exits `1` when `would_change` is `true`: the file is too large, or something would be
+removed or would stop scripts running. Moving inline images to hosted storage alone is not a change.
 
 ### list / search
 
@@ -145,6 +177,7 @@ sharedrop list --workspace <id>     # workspace pages
 sharedrop get 4knxz9                              # by slug
 sharedrop get https://sharedrop.cloud/you/4knxz9  # by URL
 sharedrop update 4knxz9 report.html               # replace content (same URL, version recorded)
+sharedrop update 4knxz9 ./site                    # replace a folder page's files in place
 sharedrop update 4knxz9 --title "New title" --visibility shared
 sharedrop update 4knxz9 --slug quarterly-report   # Pro public page custom address
 sharedrop reserve --visibility public --slug quarterly-report  # reserve a readable public address
@@ -288,10 +321,21 @@ sharedrop login --url https://staging.example    # sign in to a different instan
 Every command accepts `--json`, and emits JSON automatically when stdout is not a TTY:
 
 ```bash
-PAGE=$(sharedrop upload report.html --json | jq -r '.id')
+PAGE=$(sharedrop upload report.html --json | jq -r '.data.id')
 sharedrop share "$PAGE" --email alice@example.com --json
 sharedrop delete "$PAGE" --json
 ```
+
+`upload` and `update <ref> <file|folder>` return `id`, `title`, `url`, `full_url`, `kind`, `mode`,
+`visibility`, `was_reupload`, `version`, `scripts_will_run`, `external_resource_hosts` and
+`warnings` (always present; codes `removed_tag`, `removed_attribute`, `images_extracted`,
+`external_refs_block_scripts`). A new page also gets `same_title_pages` (your pages with the same
+title, a hint only), and a folder bundle gets `skipped` (files left out, with a reason). A revision
+keeps the same `id` and `url` and its `version` goes up by one.
+
+**Exit codes:** `0` success, `1` general error (also an expired upload token, or `check` finding a
+change), `2` no token found locally, `3` token rejected by the server (401) or forbidden (403),
+`4` rate limited, `5` not found, `6` validation error, `7` payment required.
 
 ## Custom domains
 
@@ -322,10 +366,11 @@ Both can also live in a `.env` file in the working directory.
 |-------|-------|-----|
 | `FILE_SIZE_EXCEEDED` | File is larger than your tier's per-file cap, an HTML or other text file is over 10 MB, or a folder bundle is over its total cap | Upgrade tier (does not raise the 10 MB text limit), split the file, or upload it as a zip with `sharedrop archive` |
 | `STORAGE_LIMIT` | Your total storage is at cap | Delete pages, buy a storage add-on, or upgrade |
-| `PAGE_LIMIT_REACHED` | Free-tier page cap reached | Delete old pages or upgrade |
+| `TIER_LIMIT` | Free-tier page cap reached, or the file kind is not on your plan | Delete old pages or upgrade |
 | `mime_mismatch` | The file's magic bytes don't match its extension (e.g. a `.pdf` that isn't a PDF) | Re-export from the source tool or rename the file to its real extension |
 | `Invalid token` | The 5-minute upload window expired between sign and PUT | Re-run the command; the CLI mints a fresh token automatically |
-| `UNAUTHORIZED` | Missing/revoked key, or a prod login used against another instance | `sharedrop login`, or check `SHAREDROP_TOKEN` |
+| `TOKEN_EXPIRED` | The one-off upload token expired before finalize (exit 1; your API token is fine) | Re-run the command |
+| `UNAUTHORIZED` | Revoked or invalid key, or a prod login used against another instance (exit 3) | `sharedrop login`, or check `SHAREDROP_TOKEN` |
 
 ## Development
 

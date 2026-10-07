@@ -12,7 +12,11 @@ import { resolveAuth, resolveBaseUrl } from "../auth/resolve.js";
 import { requireAuth, handleError } from "../output/errors.js";
 import { isTTY, shouldOutputJson } from "../output/format.js";
 import { resolveDestinationFolder } from "./folder.js";
-import { defaultTitle, isRetryableUploadFailure } from "./upload.js";
+import {
+  defaultTitle,
+  finalizeWithConflictRetry,
+  isRetryableUploadFailure,
+} from "./upload.js";
 
 // Re-export the plan types so the command + its tests import one archive module.
 export type { ArchiveSinglePlan, ArchiveMultipartPlan } from "../client/api-client.js";
@@ -384,12 +388,16 @@ export async function archiveCommand(
             throw error;
           }
           setStage("finalize");
-          const r = await client.finalizeUpload({
-            object_key: p.object_key,
-            upload_token: p.upload_token,
-            title: opts.title ?? defaultTitle(file),
-            ...(folderId ? { folder_id: folderId } : {}),
-          });
+          const r = await finalizeWithConflictRetry(() =>
+            client.finalizeUpload({
+              object_key: p.object_key,
+              upload_token: p.upload_token,
+              title: opts.title ?? defaultTitle(file),
+              // The create token carries the workspace; finalize must name the same one.
+              workspace_id: opts.workspace,
+              ...(folderId ? { folder_id: folderId } : {}),
+            }),
+          );
           return { page_id: r.page_id, slug: r.slug };
         },
         refreshSingle: async () => {

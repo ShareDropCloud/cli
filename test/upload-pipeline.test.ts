@@ -538,7 +538,7 @@ describe("formatUploadResult sanitiser warnings (#276)", () => {
       const output = formatUploadResult(result, "https://app.example.com", {});
       expect(output).not.toContain("Removed 1 script element.");
       expect(error).toHaveBeenCalledWith(
-        "Sanitiser warnings:\n  Removed 1 script element.",
+        "Warnings:\n  Removed 1 script element.",
       );
     } finally {
       if (previous) {

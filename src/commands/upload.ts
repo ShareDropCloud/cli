@@ -12,7 +12,12 @@ import ora from "ora";
 import {
   SharedropApiClient,
   SharedropApiError,
+  type FinalizeBundleResponse,
+  type FinalizeUploadResponse,
+  type SameTitlePage,
   type SanitiserWarning,
+  type SignUploadResponse,
+  type UploadWarning,
 } from "../client/api-client.js";
 import { resolveAuth, resolveBaseUrl } from "../auth/resolve.js";
 import { requireAuth, handleError } from "../output/errors.js";
@@ -161,7 +166,7 @@ function bundleAssetMime(filename: string): string | undefined {
 }
 
 /** True when a path points at an existing directory. */
-function isDirectory(path: string): boolean {
+export function isDirectory(path: string): boolean {
   try {
     return statSync(path).isDirectory();
   } catch {
@@ -217,8 +222,8 @@ export interface PipelineOptions {
   workspace?: string;
   pageId?: string;
   /**
-   * #185: resolved destination folder id for a NEW single-file upload. Threaded
-   * into finalize as snake_case folder_id, and only on a new upload (a re-upload
+   * #185: resolved destination folder id for a NEW upload (single file, or a
+   * bundle since #383). Threaded into finalize as snake_case folder_id, and only on a new upload (a re-upload
    * with pageId never moves: the server ignores folder_id then).
    */
   folderId?: string;
@@ -271,6 +276,59 @@ export function isRetryableUploadFailure(
   return stage === "put" && isNetworkFailure(error);
 }
 
+/**
+ * #313: finalize answers 409 with `retryable: true` while another request owns
+ * the page (`page_mutation_in_progress`: another replacement holds its storage
+ * lease; `target_page_pending`: another finalize of the same token is still
+ * running). Only the finalize call is repeated, with the same token and object
+ * key: the bytes stay in quarantine and the token lasts 5 minutes, so nothing
+ * is re-uploaded. Each wait honours Retry-After up to the per-wait cap, and the
+ * loop stops at the attempt cap or when the next wait would pass the total
+ * budget, rethrowing the last 409 so its reason and Retry-After reach output.
+ */
+export const FINALIZE_CONFLICT_MAX_ATTEMPTS = 5;
+/** Floor per wait, so a Retry-After of 0 or a past date never fires retries back to back. */
+export const FINALIZE_CONFLICT_MIN_WAIT_MS = 500;
+export const FINALIZE_CONFLICT_MAX_WAIT_MS = 30_000;
+export const FINALIZE_CONFLICT_TOTAL_WAIT_MS = 60_000;
+
+function isRetryableFinalizeConflict(error: unknown): error is SharedropApiError {
+  return (
+    error instanceof SharedropApiError &&
+    error.status === 409 &&
+    error.response?.retryable === true
+  );
+}
+
+export async function finalizeWithConflictRetry<T>(
+  finalize: () => Promise<T>,
+  sleep: (ms: number) => Promise<void> = defaultSleep,
+): Promise<T> {
+  let waitedMs = 0;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await finalize();
+    } catch (error) {
+      if (
+        !isRetryableFinalizeConflict(error) ||
+        attempt >= FINALIZE_CONFLICT_MAX_ATTEMPTS
+      ) {
+        throw error;
+      }
+      const delay = Math.max(
+        FINALIZE_CONFLICT_MIN_WAIT_MS,
+        Math.min(
+          error.response?.retryAfterMs ?? 2 ** (attempt - 1) * 1000,
+          FINALIZE_CONFLICT_MAX_WAIT_MS,
+        ),
+      );
+      if (waitedMs + delay > FINALIZE_CONFLICT_TOTAL_WAIT_MS) throw error;
+      waitedMs += delay;
+      await sleep(delay);
+    }
+  }
+}
+
 function uploadRetryDelayMs(error: unknown, attempt: number): number {
   const retryAfter =
     error instanceof SharedropApiError ? error.response?.retryAfterMs : undefined;
@@ -278,6 +336,67 @@ function uploadRetryDelayMs(error: unknown, attempt: number): number {
     retryAfter ?? 2 ** (attempt - 1) * 1000,
     UPLOAD_BACKOFF_CAP_MS,
   );
+}
+
+/** A file left out of a folder bundle, with the reason (#383). */
+export interface SkippedFile {
+  path: string;
+  reason: string;
+}
+
+/**
+ * #383: what an upload or re-upload returns to the formatter, the JSON shape
+ * agents read. Optional fields are absent only when an older server omits them.
+ */
+export interface UploadResult {
+  url: string;
+  full_url?: string;
+  title: string;
+  page_id: string;
+  kind?: string;
+  mode?: string;
+  visibility?: string;
+  was_reupload?: boolean;
+  version?: number;
+  scripts_will_run?: boolean;
+  external_resource_hosts?: string[];
+  warnings?: UploadWarning[];
+  same_title_pages?: SameTitlePage[];
+  /** Bundles only. */
+  skipped?: SkippedFile[];
+  /** Kept for callers that still read the pre-#383 field. */
+  sanitiser_warnings?: SanitiserWarning[];
+}
+
+/**
+ * Map a finalize response to an UploadResult. `warnings` falls back to the
+ * older `sanitiser_warnings`, and `was_reupload` to whether a page id was sent.
+ */
+function toUploadResult(
+  result: FinalizeUploadResponse | FinalizeBundleResponse,
+  options: PipelineOptions,
+  fallbackTitle: string,
+): UploadResult {
+  return {
+    url: result.url,
+    // #271: the server's recipient URL (branded when the owner has a live
+    // custom domain) travels with the result to the formatter.
+    ...(result.full_url ? { full_url: result.full_url } : {}),
+    title: result.title ?? options.title ?? fallbackTitle,
+    page_id: result.page_id,
+    kind: result.kind,
+    mode: result.mode,
+    visibility: result.visibility,
+    was_reupload: result.was_reupload ?? Boolean(options.pageId),
+    version: result.version,
+    scripts_will_run: result.scripts_will_run,
+    external_resource_hosts: result.external_resource_hosts,
+    warnings: result.warnings ?? result.sanitiser_warnings ?? [],
+    ...(result.same_title_pages ? { same_title_pages: result.same_title_pages } : {}),
+    ...(result.sanitiser_warnings?.length
+      ? { sanitiser_warnings: result.sanitiser_warnings }
+      : {}),
+  };
 }
 
 /**
@@ -296,61 +415,98 @@ export async function uploadFileStreamed(
   client: SharedropApiClient,
   filePath: string,
   options: PipelineOptions,
-): Promise<{
-  url: string;
-  title: string;
-  page_id: string;
-  sanitiser_warnings?: SanitiserWarning[];
-}> {
-  let createBodyStream: () => Readable;
-  let size_bytes: number;
-  let filename: string;
-  let content_type: string;
+): Promise<UploadResult> {
+  const file = await prepareSingleFile(filePath);
+  const result = await signPutThen(client, file, options, (signed) =>
+    finalizeWithConflictRetry(
+      () =>
+        client.finalizeUpload({
+          object_key: signed.object_key,
+          upload_token: signed.upload_token,
+          title: options.title,
+          visibility: options.visibility,
+          // #383: no --mode sends no mode, so the server applies the account
+          // default to a new page and keeps the current mode on a re-upload.
+          ...(options.mode ? { mode: options.mode } : {}),
+          workspace_id: options.workspace,
+          page_id: options.pageId,
+          ...(options.folderId && !options.pageId ? { folder_id: options.folderId } : {}),
+        }),
+      options.sleep ?? defaultSleep,
+    ),
+  );
+  return toUploadResult(result, options, file.filename);
+}
 
+/** A single file read and classified for the streamed pipeline. */
+export interface PreparedFile {
+  createBodyStream: () => Readable;
+  size_bytes: number;
+  filename: string;
+  content_type: string;
+}
+
+/** Resolve a path (or "-" for stdin) into what sign and PUT need. */
+export async function prepareSingleFile(filePath: string): Promise<PreparedFile> {
   if (filePath === "-") {
     const buf = await readStdin();
-    createBodyStream = () => Readable.from(buf);
-    size_bytes = buf.byteLength;
-    filename = "stdin.html";
-    content_type = "text/html";
-  } else {
-    const abs = resolvePath(filePath);
-    let stat;
-    try {
-      stat = statSync(abs);
-    } catch (err: unknown) {
-      if (err && typeof err === "object" && "code" in err && err.code === "ENOENT") {
-        console.error(`Error: File not found: ${filePath}`);
-        process.exit(6);
-      }
-      throw err;
-    }
-    // Guard the single-file path against a directory: streaming a dir into the
-    // PUT body fails late with an opaque "fetch failed". `sharedrop upload <dir>`
-    // routes folders to the bundle pipeline; `update` has no bundle path yet.
-    if (stat.isDirectory()) {
-      throw new SharedropApiError(
-        "UNSUPPORTED_INPUT",
-        `"${filePath}" is a directory. Use \`sharedrop upload <folder>\` to upload it as a bundle; folder bundles aren't supported here.`,
-        400,
-      );
-    }
-    size_bytes = stat.size;
-    filename = basename(abs);
-    // Reject unsupported extensions client-side, before signing/PUT, otherwise
-    // the file streams to storage and only fails at finalize with
-    // `unsupported_file_type`, after burning bandwidth and quota checks.
-    if (!isSupportedUpload(filename)) {
-      throw new SharedropApiError(
-        "UNSUPPORTED_FILE_TYPE",
-        `Unsupported file type: ${filename}. Supported: ${SUPPORTED_EXTENSIONS.join(", ")}. (Upload a folder as an HTML bundle with \`sharedrop upload <folder>\`.)`,
-        400,
-      );
-    }
-    content_type = detectContentType(filename);
-    createBodyStream = () => createReadStream(abs);
+    return {
+      createBodyStream: () => Readable.from(buf),
+      size_bytes: buf.byteLength,
+      filename: "stdin.html",
+      content_type: "text/html",
+    };
   }
+  const abs = resolvePath(filePath);
+  let stat;
+  try {
+    stat = statSync(abs);
+  } catch (err: unknown) {
+    if (err && typeof err === "object" && "code" in err && err.code === "ENOENT") {
+      console.error(`Error: File not found: ${filePath}`);
+      process.exit(6);
+    }
+    throw err;
+  }
+  // Guard the single-file path against a directory: streaming a dir into the
+  // PUT body fails late with an opaque "fetch failed". `upload`, `update` and
+  // `check` route folders to the bundle pipeline before reaching here.
+  if (stat.isDirectory()) {
+    throw new SharedropApiError(
+      "UNSUPPORTED_INPUT",
+      `"${filePath}" is a directory. Use \`sharedrop upload <folder>\` to upload it as a bundle; folder bundles aren't supported here.`,
+      400,
+    );
+  }
+  const filename = basename(abs);
+  // Reject unsupported extensions client-side, before signing/PUT, otherwise
+  // the file streams to storage and only fails at finalize with
+  // `unsupported_file_type`, after burning bandwidth and quota checks.
+  if (!isSupportedUpload(filename)) {
+    throw new SharedropApiError(
+      "UNSUPPORTED_FILE_TYPE",
+      `Unsupported file type: ${filename}. Supported: ${SUPPORTED_EXTENSIONS.join(", ")}. (Upload a folder as an HTML bundle with \`sharedrop upload <folder>\`.)`,
+      400,
+    );
+  }
+  return {
+    createBodyStream: () => createReadStream(abs),
+    size_bytes: stat.size,
+    filename,
+    content_type: detectContentType(filename),
+  };
+}
 
+/**
+ * Sign, stream the bytes to quarantine, then run `finish` with the signed
+ * coordinates: finalize for `upload`, lint for `check` (#383).
+ */
+export async function signPutThen<T>(
+  client: SharedropApiClient,
+  file: PreparedFile,
+  options: PipelineOptions,
+  finish: (signed: SignUploadResponse) => Promise<T>,
+): Promise<T> {
   const sleep = options.sleep ?? defaultSleep;
   let lastError: unknown;
 
@@ -361,9 +517,9 @@ export async function uploadFileStreamed(
     let stage: "sign" | "put" | "finalize" = "sign";
     try {
       const signed = await client.signUpload({
-        filename,
-        content_type,
-        size_bytes,
+        filename: file.filename,
+        content_type: file.content_type,
+        size_bytes: file.size_bytes,
         workspace: options.workspace,
         page_id: options.pageId,
         ...(options.reservationId ? { reservation_id: options.reservationId } : {}),
@@ -373,34 +529,13 @@ export async function uploadFileStreamed(
       await client.streamUpload(
         signed.upload_url,
         signed.upload_token,
-        createBodyStream(),
-        content_type,
-        size_bytes,
+        file.createBodyStream(),
+        file.content_type,
+        file.size_bytes,
       );
 
       stage = "finalize";
-      const result = await client.finalizeUpload({
-        object_key: signed.object_key,
-        upload_token: signed.upload_token,
-        title: options.title,
-        visibility: options.visibility,
-        mode: options.mode,
-        workspace: options.workspace,
-        page_id: options.pageId,
-        ...(options.folderId && !options.pageId ? { folder_id: options.folderId } : {}),
-      });
-
-      return {
-        url: result.url,
-        // #271: the server's recipient URL (branded when the owner has a live
-        // custom domain) travels with the result to the formatter.
-        ...(result.full_url ? { full_url: result.full_url } : {}),
-        title: options.title ?? filename,
-        page_id: result.page_id,
-        ...(result.sanitiser_warnings?.length
-          ? { sanitiser_warnings: result.sanitiser_warnings }
-          : {}),
-      };
+      return await finish(signed);
     } catch (error) {
       lastError = error;
       if (
@@ -429,7 +564,7 @@ const MAX_BUNDLE_ASSETS = 100;
 /** Bound pipeline-wide single-file re-signs below the server's 20/min sign limit. */
 const BUNDLE_RESIGN_BUDGET = 8;
 
-interface BundleEntry {
+export interface BundleEntry {
   /** Path as referenced in the entry HTML / sent to finalize. Root is "index.html". */
   refPath: string;
   /** Absolute path on disk. */
@@ -456,10 +591,10 @@ function walkFiles(dir: string): string[] {
   return out;
 }
 
-interface BundlePlan {
+export interface BundlePlan {
   entries: BundleEntry[];
-  /** Files left out because their type isn't a serveable bundle asset. */
-  skipped: string[];
+  /** Files left out: hidden files, or a type that isn't a serveable bundle asset. */
+  skipped: SkippedFile[];
 }
 
 /**
@@ -467,7 +602,7 @@ interface BundlePlan {
  * serveable asset or skip it. Throws a clear validation error (no network) when
  * the entry is missing or the asset count exceeds the server cap.
  */
-function planBundleUpload(dir: string, entry: string): BundlePlan {
+export function planBundleUpload(dir: string, entry: string): BundlePlan {
   const entryRel = entry.split(sep).join("/").replace(/^\.\//, "");
   const all = walkFiles(dir);
 
@@ -489,13 +624,19 @@ function planBundleUpload(dir: string, entry: string): BundlePlan {
       size: statSync(entryAbs).size,
     },
   ];
-  const skipped: string[] = [];
+  const skipped: SkippedFile[] = [];
 
   for (const rel of all) {
     if (rel === entryRel) continue;
+    // #383: hidden files and folders (.DS_Store, .git/, .env.json) never ship
+    // in a public bundle, whatever their extension.
+    if (rel.split("/").some((segment) => segment.startsWith("."))) {
+      skipped.push({ path: rel, reason: "hidden file" });
+      continue;
+    }
     const contentType = bundleAssetMime(rel);
     if (!contentType) {
-      skipped.push(rel);
+      skipped.push({ path: rel, reason: "unsupported file type" });
       continue;
     }
     const abs = join(dir, rel);
@@ -524,16 +665,38 @@ export async function uploadBundleStreamed(
   dir: string,
   entry: string,
   options: PipelineOptions,
-): Promise<{
-  url: string;
-  title: string;
-  page_id: string;
-  skipped: string[];
-  sanitiser_warnings?: SanitiserWarning[];
-}> {
+): Promise<UploadResult & { skipped: SkippedFile[] }> {
   const absDir = resolvePath(dir);
   const { entries, skipped } = planBundleUpload(absDir, entry);
+  const files = await signPutBundle(client, entries, options);
 
+  // Step 3: finalize the bundle into one page.
+  const result = await finalizeWithConflictRetry(
+    () =>
+      client.finalizeBundle({
+        files,
+        title: options.title,
+        visibility: options.visibility,
+        ...(options.mode ? { mode: options.mode } : {}),
+        workspace_id: options.workspace,
+        page_id: options.pageId,
+        ...(options.folderId && !options.pageId ? { folder_id: options.folderId } : {}),
+      }),
+    options.sleep ?? defaultSleep,
+  );
+
+  return { ...toUploadResult(result, options, basename(absDir)), skipped };
+}
+
+/**
+ * Steps 1 and 2 of a bundle: batch-sign the manifest and stream every file to
+ * quarantine. Returns the finalize (or lint, #383) file manifest.
+ */
+export async function signPutBundle(
+  client: SharedropApiClient,
+  entries: BundleEntry[],
+  options: PipelineOptions,
+): Promise<Array<{ path: string; object_key: string; upload_token: string }>> {
   // Step 1: one batch sign for the whole manifest (single rate-limit charge).
   // On a re-upload (--page-id), pass page_id so sign exempts the page-count cap
   // (260703-pzs); bundle finalize re-checks the cap on its create branch.
@@ -598,42 +761,15 @@ export async function uploadBundleStreamed(
     if (lastError) throw lastError;
   }
 
-  // Step 3: finalize the bundle into one page.
-  const result = await client.finalizeBundle({
-    files: entries.map((e, i) => ({
-      path: e.refPath,
-      object_key: signed.files[i].object_key,
-      upload_token: signed.files[i].upload_token,
-    })),
-    title: options.title,
-    visibility: options.visibility,
-    mode: options.mode,
-    workspace_id: options.workspace,
-    page_id: options.pageId,
-  });
-
-  return {
-    url: result.url,
-    // #271: carry the server's recipient URL through so a bundle upload prints
-    // the owner's branded address when they have a live custom domain.
-    ...(result.full_url ? { full_url: result.full_url } : {}),
-    title: options.title ?? basename(absDir),
-    page_id: result.page_id,
-    skipped,
-    ...(result.sanitiser_warnings?.length
-      ? { sanitiser_warnings: result.sanitiser_warnings }
-      : {}),
-  };
+  return entries.map((e, i) => ({
+    path: e.refPath,
+    object_key: signed.files[i].object_key,
+    upload_token: signed.files[i].upload_token,
+  }));
 }
 
 export function formatUploadResult(
-  result: {
-    url: string;
-    full_url?: string;
-    title: string;
-    page_id: string;
-    sanitiser_warnings?: SanitiserWarning[];
-  },
+  result: UploadResult,
   baseUrl: string,
   opts: { json?: boolean },
 ): string {
@@ -645,6 +781,9 @@ export function formatUploadResult(
     (result.url.startsWith("http")
       ? result.url
       : `${baseUrl.replace(/\/$/, "")}${result.url}`);
+  // #383: warnings are always present; an older server only sends the
+  // sanitiser's list.
+  const warnings = result.warnings ?? result.sanitiser_warnings ?? [];
 
   if (shouldOutputJson(opts)) {
     return JSON.stringify(
@@ -654,24 +793,58 @@ export function formatUploadResult(
           title: result.title,
           url: result.url,
           full_url: fullUrl,
-          ...(result.sanitiser_warnings?.length
-            ? { warnings: result.sanitiser_warnings }
-            : {}),
+          kind: result.kind,
+          mode: result.mode,
+          visibility: result.visibility,
+          was_reupload: result.was_reupload ?? false,
+          version: result.version,
+          scripts_will_run: result.scripts_will_run,
+          external_resource_hosts: result.external_resource_hosts,
+          warnings,
+          ...(result.same_title_pages ? { same_title_pages: result.same_title_pages } : {}),
+          ...(result.skipped ? { skipped: result.skipped } : {}),
         },
       },
       null,
       2,
     );
   }
-  if (result.sanitiser_warnings?.length) {
+  if (warnings.length) {
+    console.error(
+      ["Warnings:", ...warnings.map((warning) => `  ${warning.message}`)].join("\n"),
+    );
+  }
+  if (result.same_title_pages?.length) {
     console.error(
       [
-        "Sanitiser warnings:",
-        ...result.sanitiser_warnings.map((warning) => `  ${warning.message}`),
+        "Other pages with this title:",
+        ...result.same_title_pages.map((page) => `  ${page.full_url}`),
       ].join("\n"),
     );
   }
-  return [result.title, `  ${fullUrl}`, `  ID: ${result.page_id}`].join("\n");
+  return [
+    result.title,
+    `  ${fullUrl}`,
+    `  ID: ${result.page_id}`,
+    // #383: the effective mode comes from the server, so a page that took the
+    // account default (or kept its mode on a re-upload) says which it got.
+    ...(result.mode ? [`  Mode: ${result.mode}`] : []),
+    ...(result.version !== undefined ? [`  Version: ${result.version}`] : []),
+  ].join("\n");
+}
+
+/**
+ * Surface skipped bundle files in human mode so a missing asset isn't a silent
+ * mystery. JSON output carries them in `data.skipped` instead.
+ */
+export function reportSkipped(skipped: SkippedFile[], opts: { json?: boolean }): void {
+  if (skipped.length === 0 || shouldOutputJson(opts)) return;
+  console.error(
+    `Skipped ${skipped.length} file${skipped.length === 1 ? "" : "s"}: ${skipped
+      .slice(0, 10)
+      .map((f) => `${f.path} (${f.reason})`)
+      .join(", ")}${skipped.length > 10 ? "…" : ""}`,
+  );
 }
 
 export async function uploadCommand(
@@ -735,16 +908,10 @@ export async function uploadCommand(
     // Resolve the destination folder up front (uuid used directly, else a path is
     // walked/auto-created). Any error (notably FOLDERS_RESTRICTED) aborts the
     // upload before any bytes stream, never a silent root fallback (#185, D-A3).
-    // Bundles land at your top level by contract (phase-22), so --folder is not
-    // applied to a folder upload; resolving it would create unused folders.
-    let folderId: string | undefined;
-    if (opts.folder && !bundle) {
-      folderId = await resolveDestinationFolder(client, opts.folder);
-    } else if (opts.folder && bundle && !shouldOutputJson(opts)) {
-      console.error(
-        "Note: folder uploads land at your top level; --folder is ignored for a folder bundle.",
-      );
-    }
+    // #383: bundles honour it too (bundle finalize accepts folder_id).
+    const folderId = opts.folder
+      ? await resolveDestinationFolder(client, opts.folder)
+      : undefined;
 
     const useSpinner = isTTY() && !shouldOutputJson(opts);
     const spinner = useSpinner ? ora(replacing ? "Updating..." : "Uploading...").start() : null;
@@ -763,13 +930,8 @@ export async function uploadCommand(
         reservationId,
       };
 
-      let skipped: string[] = [];
-      let result: {
-        url: string;
-        title: string;
-        page_id: string;
-        sanitiser_warnings?: SanitiserWarning[];
-      };
+      let skipped: SkippedFile[] = [];
+      let result: UploadResult;
       if (bundle) {
         const out = await uploadBundleStreamed(client, file, opts.entry ?? "index.html", pipelineOpts);
         skipped = out.skipped;
@@ -785,13 +947,7 @@ export async function uploadCommand(
       if (reservationId && !shouldOutputJson(opts)) {
         console.log("Your reserved address is now live at the URL above.");
       }
-      // Surface skipped non-serveable files so a missing asset isn't a silent
-      // mystery (kept off stdout/JSON so it never pollutes machine output).
-      if (skipped.length > 0 && !shouldOutputJson(opts)) {
-        console.error(
-          `Skipped ${skipped.length} unsupported file${skipped.length === 1 ? "" : "s"}: ${skipped.slice(0, 10).join(", ")}${skipped.length > 10 ? "…" : ""}`,
-        );
-      }
+      reportSkipped(skipped, opts);
     } catch (err) {
       if (spinner) spinner.fail(replacing ? "Update failed" : "Upload failed");
       throw err;
