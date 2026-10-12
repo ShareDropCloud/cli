@@ -6,6 +6,7 @@ import type {
   Reservation, CreateReservationBody,
   TrashEmptyResult,
   EphemeralLink, CreateEphemeralLinkBody, EphemeralLinkPeopleResult,
+  Workspace,
 } from "./types.js";
 
 /**
@@ -371,6 +372,8 @@ export interface FolderNode {
   parentId: string | null;
   path: string;
   nodeType: string;
+  /** #410: the folder's workspace; null for a personal folder. Older servers omit it. */
+  workspaceId?: string | null;
   createdAt: string;
 }
 
@@ -396,6 +399,8 @@ export interface OwnerNode {
   // the owner has a live custom domain and the page is eligible, standard
   // otherwise. Optional so folder rows and older servers stay assignable.
   fullUrl?: string | null;
+  // #410: the page's /<owner>/<slug> path from the server (page rows only).
+  url?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -655,6 +660,42 @@ export class SharedropApiClient {
     return this.request<V1MeResponse>("/api/v1/me");
   }
 
+  /**
+   * #408: the caller's workspaces. A server from before #408 has no such route
+   * and answers 404 (often with an HTML page), so that maps to a clear message.
+   */
+  async listWorkspaces(): Promise<{ workspaces: Workspace[] }> {
+    const res = await fetch(`${this.baseUrl}/api/v1/workspaces`, {
+      signal: jsonRequestSignal(),
+      headers: { "Authorization": `Bearer ${this.apiKey}` },
+    });
+    if (res.status === 404) {
+      throw new SharedropApiError(
+        "NOT_SUPPORTED",
+        "This Sharedrop server cannot list workspaces yet. Update the server, or find the workspace address in its settings.",
+        404,
+      );
+    }
+    const body = (await res.json().catch(() => ({}))) as
+      | V1SuccessResponse<{ workspaces: Workspace[] }>
+      | Partial<V1ErrorResponse>;
+    if (!res.ok) {
+      const error = (body as Partial<V1ErrorResponse>).error ?? {
+        code: "UNKNOWN",
+        message: res.statusText,
+      };
+      throw new SharedropApiError(
+        error.code,
+        error.message,
+        res.status,
+        undefined,
+        undefined,
+        errorResponseDetails(res, body),
+      );
+    }
+    return (body as V1SuccessResponse<{ workspaces: Workspace[] }>).data;
+  }
+
   // ─── #255 disappearing links (enveloped v1 routes) ────────────────────
 
   async createEphemeralLink(
@@ -735,9 +776,10 @@ export class SharedropApiClient {
   }
 
   async listReservations(
-    params?: { cursor?: string; limit?: number },
+    params?: { cursor?: string; limit?: number; workspace?: string },
   ): Promise<{ data: Reservation[]; pagination: V1Pagination }> {
     const qs = new URLSearchParams();
+    if (params?.workspace) qs.set("workspace_id", params.workspace);
     if (params?.limit) qs.set("limit", String(params.limit));
     if (params?.cursor) qs.set("cursor", params.cursor);
     const s = qs.toString();
@@ -1234,18 +1276,29 @@ export class SharedropApiClient {
     return (await res.json()) as T;
   }
 
-  async createFolder(p: { name: string; parentId?: string | null }): Promise<{ folder: FolderNode }> {
+  /** #410: a workspace (id or address) creates the folder in that workspace's tree. */
+  async createFolder(p: {
+    name: string;
+    parentId?: string | null;
+    workspace?: string;
+  }): Promise<{ folder: FolderNode }> {
     return this.folderFetch(
       "/api/folders",
       "POST",
-      { name: p.name, parentId: p.parentId ?? null },
+      {
+        name: p.name,
+        parentId: p.parentId ?? null,
+        ...(p.workspace ? { workspace_id: p.workspace } : {}),
+      },
       "FOLDER_CREATE_FAILED",
     );
   }
 
-  async listTree(username: string): Promise<{ pages: OwnerNode[] }> {
+  /** #410: a workspace (id or address) reads that workspace's tree; the username is then ignored. */
+  async listTree(username: string, workspace?: string): Promise<{ pages: OwnerNode[] }> {
+    const qs = workspace ? `?workspace_id=${encodeURIComponent(workspace)}` : "";
     return this.folderFetch(
-      `/api/tree/${encodeURIComponent(username)}`,
+      `/api/tree/${encodeURIComponent(username)}${qs}`,
       "GET",
       undefined,
       "TREE_FETCH_FAILED",
@@ -1314,13 +1367,16 @@ export class SharedropApiClient {
     );
   }
 
-  async listTrash(): Promise<{ items: TrashItem[] }> {
-    return this.folderFetch("/api/trash", "GET", undefined, "TRASH_FETCH_FAILED");
+  /** #408: a workspace (id or address) lists that workspace's trash. */
+  async listTrash(workspace?: string): Promise<{ items: TrashItem[] }> {
+    const qs = workspace ? `?workspace_id=${encodeURIComponent(workspace)}` : "";
+    return this.folderFetch(`/api/trash${qs}`, "GET", undefined, "TRASH_FETCH_FAILED");
   }
 
-  async emptyTrash(): Promise<TrashEmptyResult> {
+  async emptyTrash(workspace?: string): Promise<TrashEmptyResult> {
+    const qs = workspace ? `?workspace_id=${encodeURIComponent(workspace)}` : "";
     return this.folderFetch(
-      "/api/trash",
+      `/api/trash${qs}`,
       "DELETE",
       undefined,
       "TRASH_EMPTY_FAILED",

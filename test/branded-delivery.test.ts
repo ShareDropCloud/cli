@@ -71,7 +71,7 @@ describe("CLI list --folder: branded delivery", () => {
   beforeEach(() => vi.restoreAllMocks());
   afterEach(() => vi.restoreAllMocks());
 
-  function stubTree(fullUrl: string | undefined) {
+  function stubTree(fullUrl: string | undefined, url?: string) {
     vi.spyOn(SharedropApiClient.prototype, "getMe").mockResolvedValue({
       username: "scotto",
     } as never);
@@ -89,6 +89,7 @@ describe("CLI list --folder: branded delivery", () => {
           mode: "static",
           fileSize: 10,
           ...(fullUrl ? { fullUrl } : {}),
+          ...(url ? { url } : {}),
           createdAt: "2026-07-12T00:00:00.000Z",
           updatedAt: "2026-07-12T00:00:00.000Z",
         },
@@ -102,6 +103,23 @@ describe("CLI list --folder: branded delivery", () => {
     await listCommand({ folder: FID, json: true }, {});
     const printed = JSON.parse(log.mock.calls[0][0] as string);
     expect(printed.data[0].full_url).toBe(BRANDED);
+  });
+
+  it("#410: the url is the server's /<owner>/<slug> path, not the custom-domain URL's path", async () => {
+    stubTree("https://share.acme.com/abc", "/scotto/abc");
+    const log = silenceLog();
+    await listCommand({ folder: FID, json: true }, {});
+    const printed = JSON.parse(log.mock.calls[0][0] as string);
+    expect(printed.data[0].url).toBe("/scotto/abc");
+    expect(printed.data[0].full_url).toBe("https://share.acme.com/abc");
+  });
+
+  it("an older server without the node url keeps the fullUrl path", async () => {
+    stubTree(BRANDED);
+    const log = silenceLog();
+    await listCommand({ folder: FID, json: true }, {});
+    const printed = JSON.parse(log.mock.calls[0][0] as string);
+    expect(printed.data[0].url).toBe("/scotto/abc");
   });
 
   it("falls back to the base URL when the server sends no fullUrl", async () => {

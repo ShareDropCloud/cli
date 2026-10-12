@@ -111,7 +111,8 @@ function renderEnvelope(env: BillingErrorEnvelope["error"]): string {
   return [headline, costLine, upgradeLine].join("\n");
 }
 
-export function handleError(error: unknown, opts: FormatOptions): never {
+/** `hint` is one extra text-mode line after an API error (never in --json). */
+export function handleError(error: unknown, opts: FormatOptions, hint?: string): never {
   if (error instanceof SharedropApiError) {
     // #383: TOKEN_EXPIRED is the single-use upload token (5 minute window), not
     // the API token, so it is not an auth failure: running the command again
@@ -176,6 +177,7 @@ export function handleError(error: unknown, opts: FormatOptions): never {
       if (error.response?.requestId) {
         console.error(`Request ID: ${error.response.requestId}`);
       }
+      if (hint) console.error(hint);
     }
     process.exit(exitCode);
   }

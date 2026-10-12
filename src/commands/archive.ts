@@ -9,6 +9,7 @@ import {
   type ArchiveMultipartPlan,
 } from "../client/api-client.js";
 import { resolveAuth, resolveBaseUrl } from "../auth/resolve.js";
+import { resolveWorkspace, staleDefaultHint, type WorkspaceChoice } from "../auth/workspace.js";
 import { requireAuth, handleError } from "../output/errors.js";
 import { isTTY, shouldOutputJson } from "../output/format.js";
 import { resolveDestinationFolder } from "./folder.js";
@@ -269,18 +270,22 @@ export async function archiveCommand(
   opts: {
     title?: string;
     workspace?: string;
+    personal?: boolean;
     folder?: string;
     storeAsFile?: boolean;
     json?: boolean;
   },
   globalOpts: { url?: string; token?: string } = {},
 ): Promise<void> {
+  let ws: WorkspaceChoice | undefined;
   try {
     const auth = await resolveAuth(globalOpts.token);
     requireAuth(auth);
 
     const baseUrl = resolveBaseUrl(globalOpts.url);
     const client = new SharedropApiClient({ apiKey: auth.token, baseUrl });
+    ws = resolveWorkspace(opts, baseUrl, auth.token);
+    const workspace = ws.workspace;
 
     // Archive uploads read byte ranges from disk, so stdin has no path to range.
     if (file === "-") {
@@ -326,16 +331,17 @@ export async function archiveCommand(
 
     // Resolve the destination folder up front (path -> id, auto-creating missing
     // segments). Any error (notably FOLDERS_RESTRICTED on a free key) aborts
-    // before any bytes move, never a silent root fallback.
+    // before any bytes move, never a silent root fallback. #410: a workspace
+    // archive resolves the path in that workspace's tree.
     const folderId = opts.folder
-      ? await resolveDestinationFolder(client, opts.folder)
+      ? await resolveDestinationFolder(client, opts.folder, { workspace })
       : undefined;
 
     // The one decision point: create returns the plan the client follows.
     const createParams = {
       filename,
       size_bytes: size,
-      workspace: opts.workspace,
+      workspace,
       folder_id: folderId,
       ...(opts.storeAsFile ? { as_archive: true } : {}),
     };
@@ -394,7 +400,7 @@ export async function archiveCommand(
               upload_token: p.upload_token,
               title: opts.title ?? defaultTitle(file),
               // The create token carries the workspace; finalize must name the same one.
-              workspace_id: opts.workspace,
+              workspace_id: workspace,
               ...(folderId ? { folder_id: folderId } : {}),
             }),
           );
@@ -479,6 +485,6 @@ export async function archiveCommand(
       if (sigintHandler) process.removeListener("SIGINT", sigintHandler);
     }
   } catch (err) {
-    handleError(err, opts);
+    handleError(err, opts, staleDefaultHint(err, ws));
   }
 }

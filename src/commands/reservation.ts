@@ -1,6 +1,7 @@
 import { SharedropApiClient, SharedropApiError } from "../client/api-client.js";
 import type { CreateReservationBody } from "../client/types.js";
 import { resolveAuth, resolveBaseUrl } from "../auth/resolve.js";
+import { resolveWorkspace, staleDefaultHint, type WorkspaceChoice } from "../auth/workspace.js";
 import { requireAuth, handleError } from "../output/errors.js";
 import {
   formatReservationCreated,
@@ -17,11 +18,17 @@ interface GlobalOpts {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Build an authed client from the resolved credentials + base URL. */
-async function connect(globalOpts: GlobalOpts): Promise<{ client: SharedropApiClient; baseUrl: string }> {
+async function connect(
+  globalOpts: GlobalOpts,
+): Promise<{ client: SharedropApiClient; baseUrl: string; token: string }> {
   const auth = await resolveAuth(globalOpts.token);
   requireAuth(auth);
   const baseUrl = resolveBaseUrl(globalOpts.url);
-  return { client: new SharedropApiClient({ apiKey: auth.token, baseUrl }), baseUrl };
+  return {
+    client: new SharedropApiClient({ apiKey: auth.token, baseUrl }),
+    baseUrl,
+    token: auth.token,
+  };
 }
 
 /**
@@ -37,6 +44,7 @@ async function connect(globalOpts: GlobalOpts): Promise<{ client: SharedropApiCl
 export async function resolveReservationTarget(
   client: SharedropApiClient,
   value: string,
+  workspace?: string,
 ): Promise<string> {
   const trimmed = value.trim();
   if (UUID_RE.test(trimmed)) return trimmed;
@@ -46,7 +54,7 @@ export async function resolveReservationTarget(
   // that fell off page 1 must not falsely 404 while the UUID path still works.
   let cursor: string | undefined;
   do {
-    const { data, pagination } = await client.listReservations({ limit: 100, cursor });
+    const { data, pagination } = await client.listReservations({ limit: 100, cursor, workspace });
     const match = data.find((r) => r.status === "reserved" && r.slug === trimmed);
     if (match) return match.id;
     cursor = pagination.has_more ? pagination.next_cursor ?? undefined : undefined;
@@ -66,12 +74,16 @@ export async function reserveCommand(
     agentName?: string;
     visibility?: string;
     expires?: string;
+    workspace?: string;
+    personal?: boolean;
     json?: boolean;
   },
   globalOpts: GlobalOpts = {},
 ): Promise<void> {
+  let ws: WorkspaceChoice | undefined;
   try {
-    const { client } = await connect(globalOpts);
+    const { client, baseUrl, token } = await connect(globalOpts);
+    ws = resolveWorkspace(opts, baseUrl, token);
     // Map flags to the snake_case create body; the server validates visibility,
     // the expiry timestamp, and the tier cap. Only-provided keys are sent.
     const body: CreateReservationBody = {
@@ -80,28 +92,32 @@ export async function reserveCommand(
       intended_agent_name: opts.agentName,
       visibility: opts.visibility as "public" | "private" | "shared" | undefined,
       expires_at: opts.expires,
+      workspace_id: ws.workspace,
     };
     const result = await client.createReservation(body);
     console.log(formatReservationCreated(result, opts));
   } catch (err) {
-    handleError(err, opts);
+    handleError(err, opts, staleDefaultHint(err, ws));
   }
 }
 
 export async function reservationsListCommand(
-  opts: { json?: boolean; cursor?: string; limit?: string },
+  opts: { json?: boolean; cursor?: string; limit?: string; workspace?: string; personal?: boolean },
   globalOpts: GlobalOpts = {},
 ): Promise<void> {
+  let ws: WorkspaceChoice | undefined;
   try {
-    const { client } = await connect(globalOpts);
+    const { client, baseUrl, token } = await connect(globalOpts);
+    ws = resolveWorkspace(opts, baseUrl, token);
     const limit = opts.limit ? Number(opts.limit) : undefined;
     const { data, pagination } = await client.listReservations({
       cursor: opts.cursor,
       limit: Number.isFinite(limit) ? limit : undefined,
+      workspace: ws.workspace,
     });
     console.log(formatReservationList(data, pagination, opts));
   } catch (err) {
-    handleError(err, opts);
+    handleError(err, opts, staleDefaultHint(err, ws));
   }
 }
 

@@ -6,6 +6,7 @@ import {
 } from "../client/api-client.js";
 import { normalizePageRef } from "../client/page-ref.js";
 import { resolveAuth, resolveBaseUrl } from "../auth/resolve.js";
+import { resolveWorkspace, staleDefaultHint, type WorkspaceChoice } from "../auth/workspace.js";
 import { requireAuth, handleError, EXIT_CODES } from "../output/errors.js";
 import { isTTY, shouldOutputJson } from "../output/format.js";
 import {
@@ -98,11 +99,13 @@ export async function checkCommand(
     slides?: boolean;
     entry?: string;
     workspace?: string;
+    personal?: boolean;
     json?: boolean;
   },
   globalOpts: { url?: string; token?: string } = {},
 ): Promise<void> {
   let result: CheckResult;
+  let ws: WorkspaceChoice | undefined;
   try {
     const auth = await resolveAuth(globalOpts.token);
     requireAuth(auth);
@@ -119,12 +122,15 @@ export async function checkCommand(
     }
 
     const pageId = opts.pageId ? normalizePageRef(opts.pageId) : undefined;
+    // #409: a re-upload check targets the page's own workspace, so no default.
+    ws = resolveWorkspace(opts, baseUrl, auth.token, !pageId);
+    const workspace = ws.workspace;
     const mode = opts.mode as "static" | "interactive" | undefined;
     const options = {
       // Mirror `upload`: a new single file is titled from its filename.
       title: pageId || bundle ? undefined : defaultTitle(path),
       ...(mode ? { mode } : {}),
-      workspace: opts.workspace,
+      workspace,
       pageId,
     };
 
@@ -138,7 +144,7 @@ export async function checkCommand(
         result = await client.lintBundle({
           files,
           ...(mode ? { mode } : {}),
-          workspace_id: opts.workspace,
+          workspace_id: workspace,
           page_id: pageId,
         });
       } else {
@@ -151,7 +157,7 @@ export async function checkCommand(
             title: options.title,
             ...(mode ? { mode } : {}),
             // Lint reads workspace_id; it must match the scope sign put in the token.
-            workspace_id: opts.workspace,
+            workspace_id: workspace,
             page_id: pageId,
             ...(opts.slides ? { slides: true } : {}),
           }),
@@ -172,7 +178,7 @@ export async function checkCommand(
       };
     }
   } catch (err) {
-    handleError(err, opts);
+    handleError(err, opts, staleDefaultHint(err, ws));
   }
 
   console.log(formatCheckResult(result, opts));

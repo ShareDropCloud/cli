@@ -20,6 +20,7 @@ import {
   type UploadWarning,
 } from "../client/api-client.js";
 import { resolveAuth, resolveBaseUrl } from "../auth/resolve.js";
+import { resolveWorkspace, staleDefaultHint, type WorkspaceChoice } from "../auth/workspace.js";
 import { requireAuth, handleError } from "../output/errors.js";
 import { isTTY, shouldOutputJson } from "../output/format.js";
 import { resolveDestinationFolder } from "./folder.js";
@@ -855,6 +856,7 @@ export async function uploadCommand(
     mode?: string;
     json?: boolean;
     workspace?: string;
+    personal?: boolean;
     pageId?: string;
     entry?: string;
     folder?: string;
@@ -862,12 +864,19 @@ export async function uploadCommand(
   },
   globalOpts: { url?: string; token?: string } = {},
 ): Promise<void> {
+  let ws: WorkspaceChoice | undefined;
   try {
     const auth = await resolveAuth(globalOpts.token);
     requireAuth(auth);
 
     const baseUrl = resolveBaseUrl(globalOpts.url);
     const client = new SharedropApiClient({ apiKey: auth.token, baseUrl });
+    // #409: a re-upload (--page-id) or a claim (--to) keeps its target's own
+    // workspace, which the server derives, so only an explicit --workspace is
+    // sent. For --to, the default still picks where the slug is looked up.
+    ws = resolveWorkspace(opts, baseUrl, auth.token, !opts.pageId);
+    const lookupWorkspace = ws.workspace;
+    const workspace = opts.to && ws.source !== "flag" ? undefined : ws.workspace;
 
     const replacing = Boolean(opts.pageId);
     // A directory uploads as a multi-file bundle; "-" and plain files stay on
@@ -902,15 +911,16 @@ export async function uploadCommand(
     // Resolve the reservation id up front (uuid used directly, else the caller's
     // reserved slugs are listed and matched). Any error aborts before signing.
     const reservationId = opts.to
-      ? await resolveReservationTarget(client, opts.to)
+      ? await resolveReservationTarget(client, opts.to, lookupWorkspace)
       : undefined;
 
     // Resolve the destination folder up front (uuid used directly, else a path is
     // walked/auto-created). Any error (notably FOLDERS_RESTRICTED) aborts the
     // upload before any bytes stream, never a silent root fallback (#185, D-A3).
     // #383: bundles honour it too (bundle finalize accepts folder_id).
+    // #410: a workspace upload resolves the path in that workspace's tree.
     const folderId = opts.folder
-      ? await resolveDestinationFolder(client, opts.folder)
+      ? await resolveDestinationFolder(client, opts.folder, { workspace })
       : undefined;
 
     const useSpinner = isTTY() && !shouldOutputJson(opts);
@@ -924,7 +934,7 @@ export async function uploadCommand(
         title: opts.title || (opts.pageId || bundle ? undefined : defaultTitle(file)),
         visibility: opts.visibility as "public" | "private" | "shared" | undefined,
         mode: opts.mode as "static" | "interactive" | undefined,
-        workspace: opts.workspace,
+        workspace,
         pageId: opts.pageId,
         folderId,
         reservationId,
@@ -953,6 +963,6 @@ export async function uploadCommand(
       throw err;
     }
   } catch (err) {
-    handleError(err, opts);
+    handleError(err, opts, staleDefaultHint(err, ws));
   }
 }

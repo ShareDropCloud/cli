@@ -2,11 +2,13 @@
 // level. A page reparent goes through the same `movePage` (PUT /api/pages/:id)
 // spine the dashboard + MCP use; --folder resolves a uuid directly or walks/
 // auto-creates a slash path (mirrors `upload --folder`), --root sends null.
+// #410: a path resolves in the page's own space (its workspace's tree for a
+// workspace page), so it never creates folders in the wrong tree.
 
 import { SharedropApiClient, SharedropApiError } from "../client/api-client.js";
 import { resolveAuth, resolveBaseUrl } from "../auth/resolve.js";
 import { requireAuth, handleError } from "../output/errors.js";
-import { resolveDestinationFolder } from "./folder.js";
+import { resolveDestinationFolder, UUID_RE } from "./folder.js";
 import { formatPageMoved } from "../output/format.js";
 
 interface GlobalOpts {
@@ -41,7 +43,9 @@ export async function moveCommand(
     } else {
       // uuid used directly, else a path is walked/auto-created (FOLDERS_RESTRICTED
       // and any walk error propagate so a page never silently lands at root).
-      parentId = await resolveDestinationFolder(client, opts.folder as string, { create: true });
+      const folder = opts.folder as string;
+      const workspace = UUID_RE.test(folder.trim()) ? undefined : await pageWorkspace(client, id);
+      parentId = await resolveDestinationFolder(client, folder, { create: true, workspace });
     }
 
     await client.movePage(id, parentId);
@@ -49,4 +53,15 @@ export async function moveCommand(
   } catch (err) {
     handleError(err, opts);
   }
+}
+
+/**
+ * #410: the workspace address of a page, or undefined for a personal page. The
+ * page's url is `/<owner>/<slug>`, and the owner is the workspace's address for
+ * a workspace page (usernames and workspace addresses share one namespace).
+ */
+async function pageWorkspace(client: SharedropApiClient, id: string): Promise<string | undefined> {
+  const [page, me] = await Promise.all([client.getPage(id), client.getMe()]);
+  const owner = page.url.split("/")[1];
+  return owner && owner !== me.username ? owner : undefined;
 }

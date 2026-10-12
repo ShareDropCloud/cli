@@ -50,6 +50,19 @@ describe("SharedropApiClient emptyTrash", () => {
     expect(init.headers).not.toHaveProperty("Content-Type");
   });
 
+  it("#410: names a workspace with ?workspace_id when given one", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(response({ success: true, purged: 1, freedBytes: 10 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await newClient().emptyTrash("acme team");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://app.example.com/api/trash?workspace_id=acme%20team");
+    expect(init.method).toBe("DELETE");
+  });
+
   it("is idempotent when the server reports an already-empty trash", async () => {
     vi.stubGlobal(
       "fetch",

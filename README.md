@@ -86,7 +86,10 @@ sharedrop delete <ref>      # Delete a page
 sharedrop share <ref> --email someone@example.com   # Share with a person
 sharedrop link create <ref> --expires-in 12h        # (Pro) Disappearing link; add --people to name who can open it
 sharedrop login             # Browser sign-in (persists locally)
-sharedrop whoami            # Show the authenticated account
+sharedrop whoami            # Show the authenticated account and its workspaces
+sharedrop workspaces        # List your team workspaces and their addresses
+sharedrop workspaces use <address>  # Save a default workspace for this server (--clear removes it)
+sharedrop trash list        # List what is in your trash
 sharedrop about             # Why sharedrop + key links (--json for structured output)
 ```
 
@@ -111,7 +114,8 @@ sharedrop upload report.html --page-id <id>     # replace an existing page (same
 | `--title <title>` | see description | Page title. A new single file takes its file name without the extension; stdin (`-`) and folders take the HTML `<title>` (a folder's entry file); `--page-id` keeps the current title |
 | `--visibility <vis>` | `private` | `public`, `private`, or `shared` |
 | `--mode <mode>` | see below | `static` or `interactive` (HTML only; ignored for image/PDF/Markdown/MHTML) |
-| `--workspace <id>` | None | Upload into a workspace |
+| `--workspace <id\|address>` | None | Upload into a workspace, by id or address (see [workspaces](#workspaces)) |
+| `--personal` | off | Use your personal space even when a default workspace is set |
 | `--page-id <id>` | None | Replace an existing page's content (keeps the same URL) instead of creating a new page |
 | `--folder <id\|path>` | top level | (Pro) File a new page or folder bundle into a folder |
 | `--json` | None | Force machine-readable JSON output |
@@ -151,7 +155,7 @@ sharedrop check report.html            # exit 0: publishes as-is; exit 1: someth
 sharedrop check ./site --json          # a folder bundle
 sharedrop check deck.html --slides     # as a slide deck
 sharedrop check report.html --page-id <id>   # as a re-upload of that page
-sharedrop check report.html --workspace <id> # as an upload to that workspace
+sharedrop check report.html --workspace ascend # as an upload to that workspace
 ```
 
 `check` streams the file to quarantine like `upload`, runs the server's real checks (sanitiser,
@@ -168,7 +172,7 @@ removed or would stop scripts running. Moving inline images to hosted storage al
 sharedrop list --limit 20
 sharedrop search "report" --limit 10
 sharedrop list --cursor <id>        # pagination, cursor from previous output
-sharedrop list --workspace <id>     # workspace pages
+sharedrop list --workspace ascend   # a workspace's pages (id or address)
 ```
 
 ### get / update / delete
@@ -185,6 +189,55 @@ sharedrop delete 4knxz9
 ```
 
 `--slug <address>` on `update` renames a public Pro page. The same option on `reserve` pre-claims a readable address for a public Pro reservation.
+
+`update` works on a workspace page without `--workspace`: Sharedrop finds the page's workspace.
+`reserve` and `reservations list` take `--workspace <id|address>` to work in a workspace.
+
+### workspaces
+
+```bash
+sharedrop workspaces                       # name, address, id, your role and access, one per line
+sharedrop workspaces --json                # { "data": { "workspaces": [...] } }
+sharedrop upload report.html --workspace ascend
+```
+
+Pass the address (or the id) to `--workspace` on `upload`, `check`, `archive`, `list`,
+`search`, `reserve`, `reservations list`, `trash list`, `folder create` and `folder list`. `sharedrop whoami` lists the same
+workspaces under **Workspaces**, and labels the plan it shows as your personal plan. A
+workspace you are not a member of prints `Workspace not found or you are not a member` and
+exits 5. A workspace has its own folders (see [folders](#folders-pro-or-team)).
+
+#### Default workspace
+
+```bash
+sharedrop workspaces use ascend            # check you are a member, then save it for this server
+sharedrop upload report.html               # goes to ascend
+sharedrop upload notes.md --personal       # this one goes to your personal space
+sharedrop workspaces use --clear           # remove the default
+```
+
+Commands that take `--workspace` pick the workspace in this order: `--workspace`, then
+`--personal`, then `SHAREDROP_WORKSPACE` (environment, then `.env`), then the default saved
+with `workspaces use`, then your personal space. `--workspace` with `--personal` exits 6.
+The saved default is per server URL, so a staging default never applies to production.
+Other commands (`get`, `update`, `delete`, `share`, `link`, `fetch`, `download`, `move`,
+and `folder rename`, `move`, `delete` and `restore`) ignore it, and so does a re-upload
+(`--page-id`): Sharedrop finds the page's own workspace. A claim (`--to <slug>`) looks the
+slug up in the default workspace, and the page lands in the reservation's own workspace. An
+`sdw_` key always uses its own workspace. A default you no longer
+belong to fails with `Workspace not found or you are not a member` (exit 5) rather than
+falling back to personal. `whoami` and `workspaces` show the default and where it came from
+(`default_workspace` in `--json`). In scripts, pass `--workspace` explicitly; the default is
+for interactive sessions.
+
+Each workspace shows your access, from the server's `can_upload` and `can_edit_all_pages`
+fields (both in `--json`):
+
+| Role | Text | `can_upload` | `can_edit_all_pages` |
+|------|------|--------------|----------------------|
+| owner | `access: upload, edit all pages` | `true` | `true` |
+| member | `access: upload, edit own pages` | `true` | `false` |
+| viewer | `access: read only` | `false` | `false` |
 
 ### fetch
 
@@ -273,7 +326,8 @@ sharedrop archive model-weights.bin --store-as-file   # any other file type, sto
 |------|---------|-------------|
 | `--title <title>` | file name | Page title |
 | `--folder <id\|path>` | top level | Destination folder (missing path segments are created) |
-| `--workspace <id>` | none | Upload into a workspace |
+| `--workspace <id\|address>` | none | Upload into a workspace, by id or address |
+| `--personal` | off | Use your personal space even when a default workspace is set |
 | `--store-as-file` | off | Accept any file type, not just archive formats |
 | `--json` | off | Force machine-readable JSON output |
 
@@ -284,9 +338,10 @@ quota. Files over 30 MB upload in parts, retrying failed parts, and you can have
 multipart upload in progress at a time. If an upload fails or you press Ctrl-C, the CLI
 cancels it so the reserved storage is released.
 
-### folders (Pro)
+### folders (Pro or Team)
 
-Organise pages into nested folders. Folder commands need the Pro plan or higher.
+Organise pages into nested folders. Personal folders need the Pro plan or higher; a Team
+workspace has its own folders, included with Team whatever your personal plan.
 
 ```bash
 sharedrop folder create reports/2026/q3     # creates any missing segments
@@ -296,11 +351,16 @@ sharedrop folder rename <folder-id> "Q3 reports"
 sharedrop folder move <folder-id> --parent <folder-id>   # or --root for the top level
 sharedrop folder delete <folder-id>         # add --force if the folder is not empty
 sharedrop folder restore <id>               # bring a folder or page back from trash
-sharedrop trash empty                       # permanently delete everything in trash
+sharedrop trash list                        # what is in trash (--workspace for a workspace's)
+sharedrop trash empty                       # permanently delete everything in trash (--workspace: your items in a workspace's, all of it for an owner)
 
 sharedrop upload report.html --folder reports/2026/q3   # upload straight into a folder
 sharedrop list --folder reports/2026/q3                 # pages in a folder
 sharedrop move <page-id> --folder reports/2026/q3       # move a page (or --root)
+
+sharedrop folder create reports --workspace ascend      # a folder in a workspace
+sharedrop folder list --workspace ascend                # a workspace's folders
+sharedrop upload report.html --workspace ascend --folder reports
 ```
 
 `--folder` takes a folder id or a slash path. On `upload`, `archive` and `move`, missing
@@ -308,6 +368,14 @@ path segments are created; on `list` the path must already exist. An empty folde
 deleted straight away; a folder with contents needs `--force`, which moves the whole
 folder to trash. `folder restore` brings items back within 30 days (7 days for archives)
 unless you empty the trash first.
+
+`folder create` and `folder list` take `--workspace` and `--personal` and follow the default
+workspace. `folder rename`, `move`, `delete`, `restore` and `move <page>` need no workspace:
+they act in the folder's or page's own space, so `move <page> --folder <path>` finds (and
+creates) the path in a workspace page's own workspace. Owners and members manage workspace
+folders; viewers only list them. A member cannot move or delete a folder holding another
+member's pages: the CLI prints the server's message and exits 3. A folder in the other space
+prints `A folder and its pages must be in the same space.` and exits 6.
 
 ### login
 

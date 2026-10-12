@@ -27,7 +27,8 @@ import {
   reservationsListCommand,
   reservationsRevokeCommand,
 } from "./commands/reservation.js";
-import { trashEmptyCommand } from "./commands/trash.js";
+import { trashEmptyCommand, trashListCommand } from "./commands/trash.js";
+import { workspacesCommand, workspacesUseCommand } from "./commands/workspaces.js";
 import {
   linkCreateCommand,
   linkListCommand,
@@ -56,9 +57,10 @@ program
     "Page mode (HTML only): static, interactive. Default: your account default for a new page (interactive unless changed); a re-upload keeps the page's mode",
   )
   .option("--entry <file>", "Entry HTML for a folder upload (relative to the folder)", "index.html")
-  .option("--workspace <id>", "Upload to workspace")
+  .option("--workspace <id|address>", "Workspace id or address (see `sharedrop workspaces`); overrides the default workspace")
+  .option("--personal", "Use your personal space even when a default workspace is set")
   .option("--page-id <id>", "Replace an existing page's content (keeps the same URL) instead of creating a new page")
-  .option("--folder <id|path>", "Destination folder in your Sharedrop tree (creates path segments as needed)")
+  .option("--folder <id|path>", "Destination folder, in the workspace when one applies (creates path segments as needed)")
   .option("--to <slug|id>", "Claim a reserved address created with sharedrop reserve (single file uploads only)")
   .option("--json", "Force JSON output")
   .action((path, opts) => uploadCommand(path, opts, program.opts()));
@@ -73,7 +75,8 @@ program
   .option("--page-id <id>", "Check as a re-upload of this page (uses its mode)")
   .option("--slides", "Check a single HTML file as a slide deck")
   .option("--entry <file>", "Entry HTML for a folder (relative to the folder)", "index.html")
-  .option("--workspace <id>", "Check as an upload to this workspace")
+  .option("--workspace <id|address>", "Workspace id or address (see `sharedrop workspaces`); overrides the default workspace")
+  .option("--personal", "Use your personal space even when a default workspace is set")
   .option("--json", "Force JSON output")
   .action((path, opts) => checkCommand(path, opts, program.opts()));
 
@@ -84,8 +87,9 @@ program
       "Counts against your storage quota. Download-only and private.",
   )
   .option("--title <title>", "Page title (auto-detected if omitted)")
-  .option("--folder <id|path>", "Destination folder in your Sharedrop tree (creates path segments as needed)")
-  .option("--workspace <id>", "Upload to workspace")
+  .option("--folder <id|path>", "Destination folder, in the workspace when one applies (creates path segments as needed)")
+  .option("--workspace <id|address>", "Workspace id or address (see `sharedrop workspaces`); overrides the default workspace")
+  .option("--personal", "Use your personal space even when a default workspace is set")
   .option(
     "--store-as-file",
     "Store ANY file as a download-only blob, bypassing the archive-extension check (for a large non-archive file)",
@@ -98,8 +102,9 @@ program
   .description("List your pages")
   .option("--limit <n>", "Number of pages", "50")
   .option("--cursor <id>", "Pagination cursor")
-  .option("--workspace <id>", "List workspace pages")
-  .option("--folder <id|path>", "List pages inside a folder in your Sharedrop tree (id or existing path)")
+  .option("--workspace <id|address>", "Workspace id or address (see `sharedrop workspaces`); overrides the default workspace")
+  .option("--personal", "Use your personal space even when a default workspace is set")
+  .option("--folder <id|path>", "List pages inside a folder, in the workspace when one applies (id or existing path)")
   .option("--json", "Force JSON output")
   .action((opts) => listCommand(opts, program.opts()));
 
@@ -108,7 +113,8 @@ program
   .description("Search your pages by title, slug, id, or file type (e.g. \"jpeg\", \"report\")")
   .option("--limit <n>", "Number of results", "50")
   .option("--cursor <id>", "Pagination cursor")
-  .option("--workspace <id>", "Search workspace pages")
+  .option("--workspace <id|address>", "Workspace id or address (see `sharedrop workspaces`); overrides the default workspace")
+  .option("--personal", "Use your personal space even when a default workspace is set")
   .option("--json", "Force JSON output")
   .action((query, opts) => searchCommand(query, opts, program.opts()));
 
@@ -150,8 +156,8 @@ program
 
 program
   .command("move <id>")
-  .description("Move a page into a folder or back to your top level")
-  .option("--folder <id|path>", "Destination folder in your Sharedrop tree (creates path segments as needed)")
+  .description("Move a page into a folder or back to the top level (in the page's own space)")
+  .option("--folder <id|path>", "Destination folder in the page's own space, personal or workspace (creates path segments as needed)")
   .option("--root", "Move the page to your top level")
   .option("--json", "Force JSON output")
   .action((id, opts) => moveCommand(id, opts, program.opts()));
@@ -178,17 +184,37 @@ program
   .option("--json", "Force JSON output")
   .action((opts) => whoamiCommand(opts, program.opts()));
 
-const folder = program.command("folder").description("Manage folders (Pro plan or higher)");
+const workspaces = program
+  .command("workspaces")
+  .description("List the team workspaces you belong to, with the address to pass to --workspace, and your default workspace")
+  .option("--json", "Force JSON output")
+  .action((opts) => workspacesCommand(opts, program.opts()));
+workspaces
+  .command("use [id|address]")
+  .description(
+    "Save a default workspace for this server, used by commands that take --workspace (--clear removes it)",
+  )
+  .option("--clear", "Remove the saved default workspace")
+  .option("--json", "Force JSON output")
+  .action((ref, opts) => workspacesUseCommand(ref, opts, program.opts()));
+
+const folder = program
+  .command("folder")
+  .description("Manage folders (personal folders need Pro or higher; workspace folders come with Team)");
 folder
   .command("create <path>")
   .description("Create a folder (a slash path auto-creates missing segments)")
-  .option("--parent <id>", "Parent folder id (omit for root)")
+  .option("--parent <id>", "Parent folder id in the same space (omit for root)")
+  .option("--workspace <id|address>", "Workspace id or address (see `sharedrop workspaces`); overrides the default workspace")
+  .option("--personal", "Use your personal space even when a default workspace is set")
   .option("--json", "Force JSON output")
   .action((path, opts) => folderCreateCommand(path, opts, program.opts()));
 folder
   .command("list")
-  .description("List your folders")
+  .description("List your folders, or a workspace's folders")
   .option("--parent <id>", "List children of this folder (omit for root)")
+  .option("--workspace <id|address>", "Workspace id or address (see `sharedrop workspaces`); overrides the default workspace")
+  .option("--personal", "Use your personal space even when a default workspace is set")
   .option("--json", "Force JSON output")
   .action((opts) => folderListCommand(opts, program.opts()));
 folder
@@ -217,8 +243,17 @@ folder
 
 const trash = program.command("trash").description("Manage trash");
 trash
+  .command("list")
+  .description("List the pages and folders in your trash")
+  .option("--workspace <id|address>", "Workspace id or address (see `sharedrop workspaces`); overrides the default workspace")
+  .option("--personal", "Use your personal space even when a default workspace is set")
+  .option("--json", "Force JSON output")
+  .action((opts) => trashListCommand(opts, program.opts()));
+trash
   .command("empty")
-  .description("Permanently delete every item in your trash")
+  .description("Permanently delete every item in your trash, or your items in a workspace's trash")
+  .option("--workspace <id|address>", "Workspace id or address (see `sharedrop workspaces`); overrides the default workspace")
+  .option("--personal", "Use your personal space even when a default workspace is set")
   .option("--json", "Force JSON output")
   .action((opts) => trashEmptyCommand(opts, program.opts()));
 
@@ -230,6 +265,8 @@ program
   .option("--agent-name <name>", "Name of the agent expected to claim this address")
   .option("--visibility <vis>", "Reserved visibility: public, private, shared")
   .option("--expires <timestamp>", "Expiry as an ISO 8601 timestamp")
+  .option("--workspace <id|address>", "Workspace id or address (see `sharedrop workspaces`); overrides the default workspace")
+  .option("--personal", "Use your personal space even when a default workspace is set")
   .option("--json", "Force JSON output")
   .action((opts) => reserveCommand(opts, program.opts()));
 
@@ -241,6 +278,8 @@ reservations
   .description("List your reserved addresses")
   .option("--limit <n>", "Number of results", "50")
   .option("--cursor <id>", "Pagination cursor")
+  .option("--workspace <id|address>", "Workspace id or address (see `sharedrop workspaces`); overrides the default workspace")
+  .option("--personal", "Use your personal space even when a default workspace is set")
   .option("--json", "Force JSON output")
   .action((opts) => reservationsListCommand(opts, program.opts()));
 reservations
@@ -295,6 +334,9 @@ program.addHelpText(
     "  --url / --token flags > SHAREDROP_URL / SHAREDROP_TOKEN env > .env file > saved login.\n" +
     "  Default login is a Clerk browser sign-in; --token / SHAREDROP_TOKEN take an sd_ API key.\n" +
     "  Defaults to https://sharedrop.cloud. Use --url or SHAREDROP_URL to target a different instance.\n" +
+    "\nWorkspace (commands that take --workspace, first match wins):\n" +
+    "  --workspace > --personal > SHAREDROP_WORKSPACE env > .env file > `sharedrop workspaces use` default > personal space.\n" +
+    "  The saved default is per server URL. An sdw_ key always uses its own workspace.\n" +
     "\nsharedrop turns agent or human output into a shareable URL in one step.\n" +
     "Run 'sharedrop about' for why it's built for sharing with humans and machines.\n" +
     "Docs https://sharedrop.cloud/docs · For LLMs https://sharedrop.cloud/llms.txt"

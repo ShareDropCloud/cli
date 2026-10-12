@@ -52,6 +52,10 @@ describe("moveCommand: page move", () => {
     vi.spyOn(SharedropApiClient.prototype, "getMe").mockResolvedValue({
       username: "scotto",
     } as never);
+    vi.spyOn(SharedropApiClient.prototype, "getPage").mockResolvedValue({
+      id: "p_1",
+      url: "/scotto/abc123",
+    } as never);
     vi.spyOn(SharedropApiClient.prototype, "listTree").mockResolvedValue({
       pages: [
         { id: "f_reports", title: "reports", nodeType: "folder", parentId: null, path: "/f_reports" },

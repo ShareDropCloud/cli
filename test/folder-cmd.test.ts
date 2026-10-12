@@ -268,7 +268,7 @@ describe("folder commands: arg/option threading", () => {
 
     await folderListCommand({ json: true }, {});
 
-    expect(tree).toHaveBeenCalledWith("scotto");
+    expect(tree).toHaveBeenCalledWith("scotto", undefined);
     const printed = JSON.parse(log.mock.calls[0][0] as string);
     expect(printed.folders).toEqual([{ id: "f_root", name: "reports", items: 2 }]);
   });

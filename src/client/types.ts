@@ -68,6 +68,8 @@ export interface CreateReservationBody {
   watermark_enabled?: boolean;
   folder_id?: string;
   expires_at?: string;
+  /** #408: reserve in this workspace (id or address). */
+  workspace_id?: string;
 }
 
 export interface V1Pagination {
@@ -174,6 +176,20 @@ export interface TrashEmptyResult {
   freedBytes: number;
 }
 
+/** #408: a workspace the caller belongs to (GET /api/v1/workspaces). */
+export interface Workspace {
+  id: string;
+  name: string;
+  /** The workspace address; --workspace takes this or the id. */
+  slug: string;
+  role: string;
+  tier: string;
+  /** False for a read-only viewer. Absent on servers before this field. */
+  can_upload?: boolean;
+  /** True for an owner; a member edits only pages they created. */
+  can_edit_all_pages?: boolean;
+}
+
 export interface V1MeResponse {
   username: string;
   email: string;
@@ -204,6 +220,11 @@ export interface V1MeResponse {
   storage?: { usedGb: number; capGb: number; addonGb: number };
   pricing?: PricingBlock;
   upgradeUrl?: string;
+  // #408: optional so older servers print the prior whoami output.
+  scope?: "personal" | "workspace";
+  /** The workspace an sdw_ key is bound to; null for a personal key. */
+  workspace?: Workspace | null;
+  workspaces?: Workspace[];
 }
 
 // ─── #255 disappearing links ─────────────────────────────────────────────

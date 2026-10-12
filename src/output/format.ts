@@ -9,8 +9,14 @@ import type {
   TrashEmptyResult,
   EphemeralLink,
   EphemeralLinkPeopleResult,
+  Workspace,
 } from "../client/types.js";
-import type { FolderNode } from "../client/api-client.js";
+import type { FolderNode, TrashItem } from "../client/api-client.js";
+import {
+  defaultSourceLabel,
+  defaultWorkspaceJson,
+  type DefaultWorkspaceInfo,
+} from "../auth/workspace.js";
 
 export interface FormatOptions {
   json?: boolean;
@@ -246,6 +252,126 @@ export function formatTrashEmptied(
   return chalk.green(`Emptied trash: ${itemLabel} purged, ${freedSize} freed.`);
 }
 
+/** #408: one row per trashed page or folder. */
+export function formatTrashList(items: TrashItem[], opts: FormatOptions): string {
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify({ items }, null, 2);
+  }
+  if (items.length === 0) {
+    return chalk.dim("Trash is empty.");
+  }
+  const table = new Table({
+    head: ["ID", "Title", "Type", "Deleted"],
+    style: { head: ["cyan"] },
+  });
+  for (const item of items) {
+    table.push([
+      item.id,
+      item.title,
+      item.nodeType,
+      item.deletedAt ? new Date(item.deletedAt).toLocaleDateString() : "",
+    ]);
+  }
+  return table.toString();
+}
+
+// ─── #408 workspaces ────────────────────────────────────────────────────
+
+/** What the caller may do in a workspace. Older servers omit the booleans: use the role. */
+function workspaceAccess(w: Workspace): string {
+  const canUpload = w.can_upload ?? (w.role === "owner" || w.role === "member");
+  const canEditAll = w.can_edit_all_pages ?? w.role === "owner";
+  if (!canUpload) return "access: read only";
+  return canEditAll ? "access: upload, edit all pages" : "access: upload, edit own pages";
+}
+
+function workspaceLine(w: Workspace): string {
+  return `${chalk.bold(w.name)}  address: ${w.slug}  id: ${w.id}  role: ${w.role}  ${workspaceAccess(w)}`;
+}
+
+/** #409: "Default workspace: <address> (<name>), set by <source>". */
+export function formatDefaultWorkspaceLine(d: DefaultWorkspaceInfo): string {
+  const ref = d.slug ?? d.id;
+  const name = d.name ? ` (${d.name})` : "";
+  const stale = d.member === false ? ". You are not a member of it" : "";
+  return `Default workspace: ${ref}${name}, set by ${defaultSourceLabel(d.source)}${stale}`;
+}
+
+export function formatWorkspaceList(
+  workspaces: Workspace[],
+  opts: FormatOptions,
+  defaultWorkspace: DefaultWorkspaceInfo | null = null,
+): string {
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify(
+      { data: { workspaces, default_workspace: defaultWorkspaceJson(defaultWorkspace) } },
+      null,
+      2,
+    );
+  }
+  const lines =
+    workspaces.length === 0
+      ? [
+          chalk.dim(
+            "You are not a member of any team workspace. Uploads go to your personal space.",
+          ),
+        ]
+      : workspaces.map(workspaceLine);
+  if (defaultWorkspace) lines.push(formatDefaultWorkspaceLine(defaultWorkspace));
+  return lines.join("\n");
+}
+
+/** #409: `sharedrop workspaces use` and `use --clear`. */
+export function formatWorkspaceUse(
+  result: {
+    workspace: Workspace | null;
+    cleared?: boolean;
+    host: string;
+    /** SHAREDROP_WORKSPACE (env or .env) takes precedence over the saved default. */
+    overriddenBy?: "env" | "dotenv";
+  },
+  opts: FormatOptions,
+): string {
+  if (shouldOutputJson(opts)) {
+    const w = result.workspace;
+    return JSON.stringify(
+      {
+        data: {
+          default_workspace: w ? { id: w.id, slug: w.slug, source: "saved" } : null,
+          ...(result.cleared !== undefined ? { cleared: result.cleared } : {}),
+          ...(result.overriddenBy ? { overridden_by: result.overriddenBy } : {}),
+        },
+      },
+      null,
+      2,
+    );
+  }
+  const lines: string[] = [];
+  if (result.workspace) {
+    const w = result.workspace;
+    lines.push(
+      `Default workspace for ${result.host}: ${w.name} (address: ${w.slug}, id: ${w.id})`,
+      "Commands that take --workspace now use it. Pass --personal for your personal space.",
+    );
+  } else {
+    lines.push(
+      result.cleared
+        ? `Cleared the default workspace for ${result.host}.`
+        : `No default workspace was saved for ${result.host}.`,
+    );
+  }
+  if (result.overriddenBy) {
+    lines.push(
+      `Note: ${defaultSourceLabel(result.overriddenBy)} is set and takes precedence over the saved default.`,
+    );
+  }
+  return lines.join("\n");
+}
+
+function planLabel(tier: string): string {
+  return tier.charAt(0).toUpperCase() + tier.slice(1);
+}
+
 // ─── #198 (RES-CLI-2) reservation formatters ──────────────────────────────
 //
 // All copy is em-dash free (project rule). The one-time claim token is printed
@@ -412,9 +538,18 @@ export function formatLinkRevoked(linkId: string, opts: FormatOptions): string {
   return chalk.green(`Revoked disappearing link ${linkId}. The page itself is unchanged.`);
 }
 
-export function formatWhoami(me: V1MeResponse, baseUrl: string, opts: FormatOptions): string {
+export function formatWhoami(
+  me: V1MeResponse,
+  baseUrl: string,
+  opts: FormatOptions,
+  defaultWorkspace: DefaultWorkspaceInfo | null = null,
+): string {
   if (shouldOutputJson(opts)) {
-    return JSON.stringify({ data: me }, null, 2);
+    return JSON.stringify(
+      { data: { ...me, default_workspace: defaultWorkspaceJson(defaultWorkspace) } },
+      null,
+      2,
+    );
   }
 
   const tierColor = me.tier === "pro" ? chalk.cyan : me.tier === "team" ? chalk.magenta : chalk.dim;
@@ -430,10 +565,21 @@ export function formatWhoami(me: V1MeResponse, baseUrl: string, opts: FormatOpti
     /* not a parseable URL: show the raw value */
   }
 
+  // #408: name whose plan this is. Older servers send no scope: keep "Tier".
+  let planLine = `  Tier:    ${tierColor(me.tier)}`;
+  if (me.scope === "workspace" && me.workspace) {
+    planLine = `  Plan:    ${planLabel(me.workspace.tier)} (workspace)`;
+  } else if (me.scope === "personal") {
+    planLine = `  Plan:    ${tierColor(planLabel(me.tier))} (personal)`;
+  }
+
   const lines = [
     chalk.bold(me.username),
     `  Email:   ${me.email}`,
-    `  Tier:    ${tierColor(me.tier)}`,
+    ...(me.scope === "workspace" && me.workspace
+      ? [`  Key:     bound to workspace ${me.workspace.name} (address: ${me.workspace.slug})`]
+      : []),
+    planLine,
     `  Pages:   ${me.pages_used} / ${limitDisplay}`,
     `  Storage: ${storageDisplay}`,
     `  Host:    ${host}`,
@@ -449,6 +595,20 @@ export function formatWhoami(me: V1MeResponse, baseUrl: string, opts: FormatOpti
         : `${reservations.remaining} of ${reservations.maxReservations} remaining`;
     lines.push(`  Reserved: ${reservedDisplay}`);
   }
+
+  // #408: a personal key lists its workspaces so an agent can pass an address
+  // to --workspace.
+  if (me.scope === "personal" && me.workspaces) {
+    if (me.workspaces.length === 0) {
+      lines.push("  Workspaces: none");
+    } else {
+      lines.push("  Workspaces:");
+      for (const w of me.workspaces) {
+        lines.push(`    ${w.name}  address: ${w.slug}  role: ${w.role}  ${workspaceAccess(w)}`);
+      }
+    }
+  }
+  if (defaultWorkspace) lines.push(`  ${formatDefaultWorkspaceLine(defaultWorkspace)}`);
 
   return lines.join("\n");
 }
