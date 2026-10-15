@@ -80,6 +80,7 @@ sharedrop search <query>    # Find pages by title, slug, id, or file type (e.g. 
 sharedrop get <ref>         # Show page details (ref is an id, slug, or URL)
 sharedrop fetch <ref>       # Pull a page's RAW content (stdout by default, or -o file)
 sharedrop download <ref>    # Download a page's full artefact as a ZIP (root + all assets)
+sharedrop versions <ref>    # List a page's versions; download one with download --version <n|latest>
 sharedrop update <ref> [file|folder]  # Re-upload content (same URL, new version) and/or update title/visibility
 sharedrop reserve [options] # Reserve an address before the first upload
 sharedrop delete <ref>      # Delete a page
@@ -236,7 +237,7 @@ fields (both in `--json`):
 | Role | Text | `can_upload` | `can_edit_all_pages` |
 |------|------|--------------|----------------------|
 | owner | `access: upload, edit all pages` | `true` | `true` |
-| member | `access: upload, edit own pages` | `true` | `false` |
+| member | `access: upload, edit all pages` | `true` | `true` |
 | viewer | `access: read only` | `false` | `false` |
 
 ### fetch
@@ -284,6 +285,22 @@ response as a page that doesn't exist, so existence is never leaked.
 
 > The default filename uses the **ref** you pass (`<ref>.zip`), not the page's slug, because the
 > slug isn't known client-side without an extra lookup. Pass `-o` to control the name.
+
+### versions and download --version
+
+List a page's versions, the current one first, then download the exact file that was
+uploaded for any of them (a folder upload comes back as a zip). You need to be able to edit
+the page.
+
+```bash
+sharedrop versions 4knxz9                     # table on a terminal, JSON with --json or in a pipe
+sharedrop download 4knxz9 --version 2         # writes 4knxz9-v2.pdf (the name the server sends)
+sharedrop download 4knxz9 --version latest -o report.pdf
+```
+
+The file streams straight to disk. With `--json`, or in a pipe, `download --version` prints
+`{"data":{"id","version","path","filename","size_bytes"}}`. `sharedrop -V` (or `--version`
+before any command) still prints the CLI version.
 
 ### share
 

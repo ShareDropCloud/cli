@@ -1,5 +1,5 @@
 import type {
-  V1Page, V1ShareGrant, V1Pagination, V1MeResponse,
+  V1Page, V1PageVersion, V1ShareGrant, V1Pagination, V1MeResponse,
   V1SuccessResponse, V1ListResponse, V1ErrorResponse,
   ListParams,
   BillingErrorEnvelope,
@@ -643,6 +643,39 @@ export class SharedropApiClient {
       );
     }
     return Buffer.from(await res.arrayBuffer());
+  }
+
+  /** #418: a page's versions, the live one first. */
+  async listVersions(pageId: string): Promise<V1PageVersion[]> {
+    return this.request<V1PageVersion[]>(
+      `/api/v1/pages/${encodeURIComponent(pageId)}/versions`,
+    );
+  }
+
+  /**
+   * #418: open one version's exact original as a STREAM (a version number,
+   * "latest", or a selector from listVersions). Like openArchiveDownload it
+   * returns the OK Response so the caller pipes `res.body` to disk; the file
+   * is never buffered in memory. Errors are the v1 envelope.
+   */
+  async openVersionDownload(pageId: string, version: string): Promise<Response> {
+    const res = await fetch(
+      `${this.baseUrl}/api/v1/pages/${encodeURIComponent(pageId)}/versions/${encodeURIComponent(version)}/download`,
+      { headers: { "Authorization": `Bearer ${this.apiKey}` } },
+    );
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as Partial<V1ErrorResponse>;
+      const error = body.error || { code: "UNKNOWN", message: res.statusText };
+      throw new SharedropApiError(
+        error.code,
+        error.message,
+        res.status,
+        undefined,
+        undefined,
+        errorResponseDetails(res, body),
+      );
+    }
+    return res;
   }
 
   async sharePage(pageId: string, email: string): Promise<V1ShareGrant> {

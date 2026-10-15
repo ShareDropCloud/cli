@@ -94,6 +94,20 @@ describe("SharedropApiClient: folder methods (flat-body, Bearer)", () => {
     expect(init.headers["Authorization"]).toBe("Bearer sd_test");
   });
 
+  // #423: a non-member's workspace tree read reports NOT_FOUND, as list does.
+  it("listTree surfaces the server's NOT_FOUND code for a workspace it cannot reach", async () => {
+    const message = "Workspace not found or you are not a member";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(errResponse({ error: message, code: "NOT_FOUND" }, 404)),
+    );
+    await expect(newClient().listTree("scotto", "acme")).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      message,
+      status: 404,
+    });
+  });
+
   it("deleteFolder without force DELETEs /api/folders/:id (no force query)", async () => {
     const fetchMock = vi
       .fn()

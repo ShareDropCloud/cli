@@ -1,10 +1,11 @@
 import { writeFileSync, createWriteStream, statSync } from "node:fs";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { SharedropApiClient } from "../client/api-client.js";
+import { SharedropApiClient, SharedropApiError } from "../client/api-client.js";
 import { normalizePageRef } from "../client/page-ref.js";
 import { resolveAuth, resolveBaseUrl } from "../auth/resolve.js";
 import { requireAuth, handleError } from "../output/errors.js";
+import { shouldOutputJson } from "../output/format.js";
 
 /**
  * #139: `sharedrop download <id>` writes a page's artefact to disk.
@@ -26,6 +27,10 @@ import { requireAuth, handleError } from "../output/errors.js";
  *
  * The getPage round-trip also powers the archive filename default: the page title
  * (e.g. "backup.tar.gz") is used when it looks like a filename, else the ref.
+ *
+ * #418: `--version <N|latest>` skips all of the above and streams that
+ * version's exact original from GET /api/v1/pages/:id/versions/:version/download
+ * (default name from the server's Content-Disposition, e.g. "abc234-v2.pdf").
  */
 
 /** True when a title is safe to use as a bare filename (no path parts, has an ext). */
@@ -35,9 +40,29 @@ function isFilenameLike(title: string): boolean {
   return /^[^\s][^/\\]*\.[A-Za-z0-9]{1,10}$/.test(title);
 }
 
+/** #418: the file name from `Content-Disposition`, without any path part. */
+function dispositionFilename(header: string | null): string | null {
+  const name = header?.match(/filename="([^"]+)"/)?.[1];
+  const base = name?.split(/[/\\]/).pop();
+  return base && base !== "." && base !== ".." ? base : null;
+}
+
+/** Write a streamed body to stdout ("-") or a file, never buffering it whole. */
+async function writeStream(res: Response, output: string | null): Promise<string | null> {
+  const body = Readable.fromWeb(res.body as import("node:stream/web").ReadableStream);
+  if (output === null) {
+    // Write chunks by hand rather than pipeline(): pipeline would call end()
+    // on process.stdout and close it.
+    for await (const chunk of body) process.stdout.write(chunk as Buffer);
+    return null;
+  }
+  await pipeline(body, createWriteStream(output));
+  return output;
+}
+
 export async function downloadCommand(
   id: string,
-  opts: { output?: string; json?: boolean },
+  opts: { output?: string; version?: string; json?: boolean },
   globalOpts: { url?: string; token?: string } = {},
 ): Promise<void> {
   try {
@@ -48,6 +73,38 @@ export async function downloadCommand(
     const client = new SharedropApiClient({ apiKey: auth.token, baseUrl });
 
     const ref = normalizePageRef(id);
+
+    // #418: --version downloads that version's exact original upload (a
+    // folder upload as a zip), named as the server names it unless -o is set.
+    if (opts.version !== undefined) {
+      if (!/^(latest|[1-9][0-9]*)$/.test(opts.version)) {
+        throw new SharedropApiError(
+          "VALIDATION_ERROR",
+          "--version takes a version number (see `sharedrop versions <page>`) or latest.",
+          400,
+        );
+      }
+      const res = await client.openVersionDownload(ref, opts.version);
+      if (opts.output === "-") {
+        await writeStream(res, null);
+        return;
+      }
+      const filename = dispositionFilename(res.headers.get("content-disposition"));
+      const path = opts.output ?? filename ?? `${ref}-v${opts.version}`;
+      await writeStream(res, path);
+      const size = statSync(path).size;
+      // #416 hardening: --json or a non-terminal stdout gets a JSON object.
+      if (shouldOutputJson(opts)) {
+        const version = opts.version === "latest" ? "latest" : Number(opts.version);
+        console.log(
+          JSON.stringify({ data: { id: ref, version, path, filename, size_bytes: size } }, null, 2),
+        );
+      } else {
+        console.log(`Downloaded ${ref} version ${opts.version} → ${path} (${size} bytes)`);
+      }
+      return;
+    }
+
     const page = await client.getPage(ref);
 
     if (page.kind === "archive") {

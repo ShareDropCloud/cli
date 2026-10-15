@@ -103,7 +103,7 @@ function stub(routes: Parameters<typeof routedFetch>[0]) {
 describe("sharedrop workspaces", () => {
   const LIST_LINES = [
     "Ascend Intelligence  address: ascend  id: 6f1c2a9e-1b7d-4c52-9a51-0d3f8e2b7a10  role: owner  access: upload, edit all pages",
-    "Client Reports  address: client-reports  id: 0b8e4d3c-5a21-4f6e-8c97-2d1a6b9e4f30  role: member  access: upload, edit own pages",
+    "Client Reports  address: client-reports  id: 0b8e4d3c-5a21-4f6e-8c97-2d1a6b9e4f30  role: member  access: upload, edit all pages",
     "Partner Briefs  address: partner-briefs  id: 9d2f7b1a-3c84-4e5d-b6a0-7e1c5f8d2a49  role: viewer  access: read only",
   ];
 
@@ -128,6 +128,19 @@ describe("sharedrop workspaces", () => {
     expect(printed().split("\n").every((l) => l.endsWith("access: read only"))).toBe(true);
   });
 
+  // Production still sends false for a member until #442 is promoted.
+  it("a member the server marks can_edit_all_pages false edits own pages", async () => {
+    const member = { ...WORKSPACES[1], can_edit_all_pages: false };
+    stub({
+      "GET /api/v1/workspaces": () => jsonResponse(200, { data: { workspaces: [member] } }),
+    });
+    restoreTTY = forceTTY();
+
+    await workspacesCommand({}, {});
+
+    expect(printed()).toContain("role: member  access: upload, edit own pages");
+  });
+
   it("an older server without the access booleans falls back to the role", async () => {
     stub({
       "GET /api/v1/workspaces": () =>
@@ -137,7 +150,10 @@ describe("sharedrop workspaces", () => {
 
     await workspacesCommand({}, {});
 
-    expect(printed().split("\n")).toEqual(LIST_LINES);
+    // A role-only server predates #442 and still limits a member to their own pages.
+    expect(printed().split("\n")).toEqual(
+      LIST_LINES.map((l) => l.replace("role: member  access: upload, edit all pages", "role: member  access: upload, edit own pages")),
+    );
   });
 
   it("--json prints the server's data envelope plus the default workspace (#409)", async () => {
@@ -193,7 +209,7 @@ describe("sharedrop whoami workspace fields", () => {
       [
         "  Workspaces:",
         "    Ascend Intelligence  address: ascend  role: owner  access: upload, edit all pages",
-        "    Client Reports  address: client-reports  role: member  access: upload, edit own pages",
+        "    Client Reports  address: client-reports  role: member  access: upload, edit all pages",
         "    Partner Briefs  address: partner-briefs  role: viewer  access: read only",
       ].join("\n"),
     );

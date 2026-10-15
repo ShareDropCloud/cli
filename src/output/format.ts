@@ -2,6 +2,7 @@ import chalk from "chalk";
 import Table from "cli-table3";
 import type {
   V1Page,
+  V1PageVersion,
   V1Pagination,
   V1ShareGrant,
   V1MeResponse,
@@ -85,6 +86,30 @@ export function formatPageList(pages: V1Page[], pagination: V1Pagination, opts: 
     output += "\n" + chalk.dim(`More pages available. Use --cursor ${pagination.next_cursor}`);
   }
   return output;
+}
+
+/** #418: `sharedrop versions`, the live version first. */
+export function formatVersionList(versions: V1PageVersion[], opts: FormatOptions): string {
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify({ data: versions }, null, 2);
+  }
+  const table = new Table({
+    head: ["Version", "Kind", "Size", "Created", "Original"],
+    style: { head: ["cyan"] },
+  });
+  for (const v of versions) {
+    table.push([
+      v.live ? `v${v.version} (latest)` : `v${v.version}`,
+      v.kind,
+      `${(v.file_size / 1024).toFixed(1)} KB`,
+      new Date(v.created_at).toLocaleString(),
+      v.has_original ? "yes" : chalk.dim("no"),
+    ]);
+  }
+  return [
+    table.toString(),
+    chalk.dim("Download one with: sharedrop download <page> --version <number|latest>"),
+  ].join("\n");
 }
 
 export function formatShare(grant: V1ShareGrant, pageTitle: string, opts: FormatOptions): string {

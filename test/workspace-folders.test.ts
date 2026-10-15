@@ -20,7 +20,6 @@ import { resolveAuth } from "../src/auth/resolve.js";
 import { clearSavedWorkspace, saveWorkspace } from "../src/auth/store.js";
 import {
   folderCreateCommand,
-  folderDeleteCommand,
   folderListCommand,
   folderMoveCommand,
 } from "../src/commands/folder.js";
@@ -40,8 +39,6 @@ import { ME_PERSONAL, WORKSPACES, WORKSPACE_NOT_FOUND_MESSAGE } from "./fixtures
 const ANSI = /\x1b\[[0-9;]*m/g;
 const ASCEND = WORKSPACES[0];
 const WS = "smoke-agents";
-const OTHER_MEMBERS =
-  "This folder holds pages created by other members. Only a workspace owner can move or delete it.";
 const CROSS_SPACE = "A folder and its pages must be in the same space.";
 
 /** A workspace tree: reports/ at the root holding one page, and reports/2026/. */
@@ -332,21 +329,18 @@ describe("move --folder <path> resolves in the page's own space", () => {
   });
 });
 
-describe("folder move and delete refusals for a member", () => {
-  it("folder move prints the other-members message, exit 3", async () => {
-    stub({ "PATCH /api/folders/*": () => jsonResponse(403, { error: OTHER_MEMBERS }) });
+// #442: members move and delete any workspace folder, so the server's
+// other-members refusal is gone; a 403 the move still sends exits 3.
+describe("folder move refusal", () => {
+  it("folder move prints a 403 refusal, exit 3", async () => {
+    const reason = "Folders in a workspace need the Team plan.";
+    stub({
+      "PATCH /api/folders/*": () => jsonResponse(403, { error: reason, code: "FOLDERS_RESTRICTED" }),
+    });
     restoreTTY = forceTTY();
     const code = await runForExit(() => folderMoveCommand("f_1", { root: true }, {}));
     expect(code).toBe(EXIT_CODES.AUTH_FAILED);
-    expect(printedErr()).toContain(`Error: ${OTHER_MEMBERS}`);
-  });
-
-  it("folder delete --force prints the other-members message, exit 3", async () => {
-    const calls = stub({ "DELETE /api/folders/*": () => jsonResponse(403, { error: OTHER_MEMBERS }) });
-    const code = await runForExit(() => folderDeleteCommand("f_1", { force: true, json: true }, {}));
-    expect(code).toBe(EXIT_CODES.AUTH_FAILED);
-    expect(new URL(calls[0].url).search).toBe("?force=true");
-    expect(JSON.parse(printedErr()).error.message).toBe(OTHER_MEMBERS);
+    expect(printedErr()).toContain(reason);
   });
 });
 

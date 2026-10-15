@@ -2,7 +2,7 @@
 // tested against exactly what the server half returns.
 
 /** GET /api/v1/workspaces, 200. */
-export const WORKSPACES_RESPONSE = {"data":{"workspaces":[{"id":"6f1c2a9e-1b7d-4c52-9a51-0d3f8e2b7a10","name":"Ascend Intelligence","slug":"ascend","role":"owner","tier":"team","can_upload":true,"can_edit_all_pages":true},{"id":"0b8e4d3c-5a21-4f6e-8c97-2d1a6b9e4f30","name":"Client Reports","slug":"client-reports","role":"member","tier":"team","can_upload":true,"can_edit_all_pages":false},{"id":"9d2f7b1a-3c84-4e5d-b6a0-7e1c5f8d2a49","name":"Partner Briefs","slug":"partner-briefs","role":"viewer","tier":"team","can_upload":false,"can_edit_all_pages":false}]}};
+export const WORKSPACES_RESPONSE = {"data":{"workspaces":[{"id":"6f1c2a9e-1b7d-4c52-9a51-0d3f8e2b7a10","name":"Ascend Intelligence","slug":"ascend","role":"owner","tier":"team","can_upload":true,"can_edit_all_pages":true},{"id":"0b8e4d3c-5a21-4f6e-8c97-2d1a6b9e4f30","name":"Client Reports","slug":"client-reports","role":"member","tier":"team","can_upload":true,"can_edit_all_pages":true},{"id":"9d2f7b1a-3c84-4e5d-b6a0-7e1c5f8d2a49","name":"Partner Briefs","slug":"partner-briefs","role":"viewer","tier":"team","can_upload":false,"can_edit_all_pages":false}]}};
 
 export const WORKSPACES = WORKSPACES_RESPONSE.data.workspaces;
 

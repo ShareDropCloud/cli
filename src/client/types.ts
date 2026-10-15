@@ -14,6 +14,19 @@ export interface V1Page {
   updated_at: string;
 }
 
+/** #418: one entry of GET /api/v1/pages/:id/versions (the live one first). */
+export interface V1PageVersion {
+  version: number;
+  /** What `download --version` sends: "latest" or the version's row id. */
+  selector: string;
+  live: boolean;
+  file_size: number;
+  kind: string;
+  content_type: string;
+  has_original: boolean;
+  created_at: string;
+}
+
 /**
  * #366: set when the account's daily share-email limit (Free 10, Pro 500, Team 2000)
  * stopped an invite email. The share or link itself still succeeded.
@@ -186,7 +199,7 @@ export interface Workspace {
   tier: string;
   /** False for a read-only viewer. Absent on servers before this field. */
   can_upload?: boolean;
-  /** True for an owner; a member edits only pages they created. */
+  /** True for an owner or member (#442); false for a viewer, and for a member on older servers. */
   can_edit_all_pages?: boolean;
 }
 

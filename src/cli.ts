@@ -6,6 +6,7 @@ import { listCommand } from "./commands/list.js";
 import { getCommand } from "./commands/get.js";
 import { downloadCommand } from "./commands/download.js";
 import { fetchCommand } from "./commands/fetch.js";
+import { versionsCommand } from "./commands/versions.js";
 import { updateCommand } from "./commands/update.js";
 import { deleteCommand } from "./commands/delete.js";
 import { shareCommand } from "./commands/share.js";
@@ -39,7 +40,10 @@ import {
 const program = new Command()
   .name("sharedrop")
   .description("Upload and manage HTML pages on sharedrop")
-  .version(__CLI_VERSION__)
+  // #418: commander matches a program option anywhere on the line, so a
+  // program-wide --version would swallow `download <id> --version <n>`. The
+  // program keeps -V, and a --version before any command is handled below.
+  .version(__CLI_VERSION__, "-V", "output the version number (or --version)")
   .option("--url <url>", "Target base URL; overrides SHAREDROP_URL, .env, and saved config")
   .option("--token <token>", "API token; overrides SHAREDROP_TOKEN, .env, and saved login");
 
@@ -126,10 +130,20 @@ program
 
 program
   .command("download <id>")
-  .description("Download a page's artefact as a zip")
+  .description("Download a page's artefact as a zip, or with --version the exact file uploaded for that version")
   .option("-o, --output <path>", "Output file path ('-' for stdout)")
+  .option(
+    "--version <n|latest>",
+    "Download this version's original upload (a folder upload as a zip); see `sharedrop versions <id>`",
+  )
   .option("--json", "Force JSON output")
   .action((id, opts) => downloadCommand(id, opts, program.opts()));
+
+program
+  .command("versions <id>")
+  .description("List a page's versions (the current one first) with their numbers, for download --version")
+  .option("--json", "Force JSON output")
+  .action((id, opts) => versionsCommand(id, opts, program.opts()));
 
 program
   .command("fetch <id>")
@@ -341,5 +355,23 @@ program.addHelpText(
     "Run 'sharedrop about' for why it's built for sharing with humans and machines.\n" +
     "Docs https://sharedrop.cloud/docs · For LLMs https://sharedrop.cloud/llms.txt"
 );
+
+// #416 hardening: --version before any command name prints the version, even
+// after --url / --token (`sharedrop --url x --version`). After a command name
+// it stays that command's option (`download <page> --version <n>`).
+function hasLeadingVersionFlag(args: string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--version") return true;
+    if (arg === "--url" || arg === "--token") i++;
+    else if (!arg.startsWith("--url=") && !arg.startsWith("--token=")) return false;
+  }
+  return false;
+}
+
+if (hasLeadingVersionFlag(process.argv.slice(2))) {
+  console.log(__CLI_VERSION__);
+  process.exit(0);
+}
 
 program.parse();
