@@ -7,6 +7,7 @@ import type {
   TrashEmptyResult,
   EphemeralLink, CreateEphemeralLinkBody, EphemeralLinkPeopleResult,
   Workspace,
+  SharedPage,
 } from "./types.js";
 
 /**
@@ -727,6 +728,17 @@ export class SharedropApiClient {
       );
     }
     return (body as V1SuccessResponse<{ workspaces: Workspace[] }>).data;
+  }
+
+  /** #446: pages other people have shared with the caller, newest first. */
+  async listSharedWithMe(
+    params?: { cursor?: string; limit?: number },
+  ): Promise<{ data: SharedPage[]; pagination: V1Pagination }> {
+    const qs = new URLSearchParams();
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.cursor) qs.set("cursor", params.cursor);
+    const s = qs.toString();
+    return this.requestList<SharedPage>(`/api/v1/shared${s ? `?${s}` : ""}`);
   }
 
   // ─── #255 disappearing links (enveloped v1 routes) ────────────────────

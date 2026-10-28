@@ -10,6 +10,7 @@ import { versionsCommand } from "./commands/versions.js";
 import { updateCommand } from "./commands/update.js";
 import { deleteCommand } from "./commands/delete.js";
 import { shareCommand } from "./commands/share.js";
+import { sharedCommand } from "./commands/shared.js";
 import { loginCommand } from "./commands/login.js";
 import { whoamiCommand } from "./commands/whoami.js";
 import { aboutCommand } from "./commands/about.js";
@@ -182,6 +183,14 @@ program
   .requiredOption("--email <email>", "Email address to share with")
   .option("--json", "Force JSON output")
   .action((id, opts) => shareCommand(id, opts, program.opts()));
+
+program
+  .command("shared")
+  .description("List pages other people have shared with you, newest first (needs a personal key, not sdw_)")
+  .option("--limit <n>", "Number of shares", "50")
+  .option("--cursor <id>", "Pagination cursor")
+  .option("--json", "Force JSON output")
+  .action((opts) => sharedCommand(opts, program.opts()));
 
 program
   .command("login")

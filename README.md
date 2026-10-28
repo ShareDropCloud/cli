@@ -85,6 +85,7 @@ sharedrop update <ref> [file|folder]  # Re-upload content (same URL, new version
 sharedrop reserve [options] # Reserve an address before the first upload
 sharedrop delete <ref>      # Delete a page
 sharedrop share <ref> --email someone@example.com   # Share with a person
+sharedrop shared            # List pages other people have shared with you (personal key)
 sharedrop link create <ref> --expires-in 12h        # (Pro) Disappearing link; add --people to name who can open it
 sharedrop login             # Browser sign-in (persists locally)
 sharedrop whoami            # Show the authenticated account and its workspaces

@@ -11,6 +11,7 @@ import type {
   EphemeralLink,
   EphemeralLinkPeopleResult,
   Workspace,
+  SharedPage,
 } from "../client/types.js";
 import type { FolderNode, TrashItem } from "../client/api-client.js";
 import {
@@ -21,6 +22,14 @@ import {
 
 export interface FormatOptions {
   json?: boolean;
+}
+
+/**
+ * #446: drop C0 and C1 control characters (escape sequences, terminal links,
+ * bells) from server text before it is printed in a table. JSON output stays raw.
+ */
+function plain(text: string): string {
+  return text.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
 }
 
 export function isTTY(): boolean {
@@ -47,11 +56,11 @@ export function formatPage(page: V1Page, opts: FormatOptions): string {
     return JSON.stringify({ data: page }, null, 2);
   }
   return [
-    chalk.bold(page.title),
-    `  URL:        ${chalk.cyan(page.full_url)}`,
-    `  ID:         ${page.id}`,
-    `  Mode:       ${page.mode}`,
-    `  Visibility: ${page.visibility}`,
+    chalk.bold(plain(page.title)),
+    `  URL:        ${chalk.cyan(plain(page.full_url))}`,
+    `  ID:         ${plain(page.id)}`,
+    `  Mode:       ${plain(page.mode)}`,
+    `  Visibility: ${plain(page.visibility)}`,
     `  Size:       ${(page.file_size / 1024).toFixed(1)} KB`,
     `  Created:    ${new Date(page.created_at).toLocaleDateString()}`,
   ].join("\n");
@@ -72,11 +81,12 @@ export function formatPageList(pages: V1Page[], pagination: V1Pagination, opts: 
   });
 
   for (const p of pages) {
+    const title = plain(p.title);
     table.push([
-      p.id,
-      p.title.length > 40 ? p.title.slice(0, 37) + "..." : p.title,
-      chalk.cyan(p.full_url),
-      p.visibility,
+      plain(p.id),
+      title.length > 40 ? title.slice(0, 37) + "..." : title,
+      chalk.cyan(plain(p.full_url)),
+      plain(p.visibility),
       new Date(p.created_at).toLocaleDateString(),
     ]);
   }
@@ -291,9 +301,9 @@ export function formatTrashList(items: TrashItem[], opts: FormatOptions): string
   });
   for (const item of items) {
     table.push([
-      item.id,
-      item.title,
-      item.nodeType,
+      plain(item.id),
+      plain(item.title),
+      plain(item.nodeType),
       item.deletedAt ? new Date(item.deletedAt).toLocaleDateString() : "",
     ]);
   }
@@ -415,12 +425,12 @@ export function formatReservationCreated(
 
   const { reservation, claim_token } = result;
   const lines = [
-    chalk.bold(reservation.title),
-    `  ${chalk.cyan(reservation.full_url)}`,
-    `  Status: ${reservation.status}`,
+    chalk.bold(plain(reservation.title)),
+    `  ${chalk.cyan(plain(reservation.full_url))}`,
+    `  Status: ${plain(reservation.status)}`,
   ];
   if (reservation.intended_agent_name) {
-    lines.push(`  Agent:  ${reservation.intended_agent_name}`);
+    lines.push(`  Agent:  ${plain(reservation.intended_agent_name)}`);
   }
   lines.push("");
   lines.push(`  Claim token: ${chalk.yellow(claim_token)}`);
@@ -461,6 +471,44 @@ export function formatReservationList(
   let output = table.toString();
   if (pagination.has_more && pagination.next_cursor) {
     output += "\n" + chalk.dim(`More reservations available. Use --cursor ${pagination.next_cursor}`);
+  }
+  return output;
+}
+
+/** #446: `sharedrop shared`, newest share first. */
+export function formatSharedList(
+  shares: SharedPage[],
+  pagination: V1Pagination,
+  opts: FormatOptions,
+): string {
+  if (shouldOutputJson(opts)) {
+    return JSON.stringify({ data: shares, pagination }, null, 2);
+  }
+
+  if (shares.length === 0) {
+    return chalk.dim("Nothing has been shared with you yet.");
+  }
+
+  const table = new Table({
+    head: ["ID", "Title", "URL", "Shared by", "Shared", "Expires"],
+    style: { head: ["cyan"] },
+  });
+
+  for (const s of shares) {
+    const title = plain(s.title);
+    table.push([
+      plain(s.page_id),
+      title.length > 40 ? title.slice(0, 37) + "..." : title,
+      chalk.cyan(plain(s.full_url)),
+      plain(s.shared_by ?? ""),
+      new Date(s.shared_at).toLocaleDateString(),
+      s.expires_at ? new Date(s.expires_at).toLocaleDateString() : "",
+    ]);
+  }
+
+  let output = table.toString();
+  if (pagination.has_more && pagination.next_cursor) {
+    output += "\n" + chalk.dim(`More shares available. Use --cursor ${pagination.next_cursor}`);
   }
   return output;
 }

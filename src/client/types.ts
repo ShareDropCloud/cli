@@ -203,6 +203,20 @@ export interface Workspace {
   can_edit_all_pages?: boolean;
 }
 
+/** #446: a page someone shared with the caller (GET /api/v1/shared). */
+export interface SharedPage {
+  page_id: string;
+  title: string;
+  kind: string;
+  /** Relative path, /{owner or workspace}/{slug}, as on V1Page. */
+  url: string;
+  /** Absolute link, as on V1Page. */
+  full_url: string;
+  shared_by: string | null;
+  shared_at: string;
+  expires_at: string | null;
+}
+
 export interface V1MeResponse {
   username: string;
   email: string;
