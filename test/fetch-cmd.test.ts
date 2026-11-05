@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SharedropApiClient } from "../src/client/api-client.js";
-import { statusToExitCode, EXIT_CODES } from "../src/output/errors.js";
+import { handleError, statusToExitCode, EXIT_CODES } from "../src/output/errors.js";
 
 function newClient(): SharedropApiClient {
   return new SharedropApiClient({ apiKey: "sd_test", baseUrl: "https://app.example.com" });
@@ -64,11 +64,21 @@ describe("SharedropApiClient.fetchPage (#296)", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(newClient().fetchPage("p1")).rejects.toMatchObject({
+    const error = await newClient().fetchPage("p1").catch((e) => e);
+    expect(error).toMatchObject({
       name: "SharedropApiError",
       code: "ARCHIVE_DOWNLOAD_REQUIRED",
       status: 409,
+      response: { downloadUrl: "https://app.example.com/api/archives/p1/download" },
     });
+    const output = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation(((code: number) => { throw new Error(`exit:${code}`); }) as never);
+    expect(() => handleError(error, { json: true })).toThrow("exit:1");
+    expect(JSON.parse(output.mock.calls[0][0])).toEqual({ error: {
+      code: "ARCHIVE_DOWNLOAD_REQUIRED",
+      message: "This page is an archive, so its raw content cannot be fetched.",
+      download_url: "https://app.example.com/api/archives/p1/download",
+    } });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

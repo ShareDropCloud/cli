@@ -261,6 +261,8 @@ sharedrop fetch 4knxz9 | grep -i title # pipe into another tool
 
 Distinct from a zip **download**: `fetch` mints a short-lived signed URL, GETs it, and
 emits the raw root document. This is the agent-native read path.
+Archives cannot be fetched: the `ARCHIVE_DOWNLOAD_REQUIRED` error includes a
+`download_url` in JSON output. Use `sharedrop download <id>` to save the archive.
 
 ### download
 
@@ -386,6 +388,8 @@ path segments are created; on `list` the path must already exist. An empty folde
 deleted straight away; a folder with contents needs `--force`, which moves the whole
 folder to trash. `folder restore` brings items back within 30 days (7 days for archives)
 unless you empty the trash first.
+
+Workspace keys with `workspace:pages:write` can write in their bound workspace. This scope alone cannot empty workspace trash. Use a signed-in account or a personal key with `pages:write`. Existing workspace keys with `pages:write` can empty their bound workspace trash, subject to the member role.
 
 `folder create` and `folder list` take `--workspace` and `--personal` and follow the default
 workspace. `folder rename`, `move`, `delete`, `restore` and `move <page>` need no workspace:

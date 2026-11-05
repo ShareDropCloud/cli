@@ -41,6 +41,7 @@ function jsonRequestSignal(signal?: AbortSignal | null): AbortSignal {
 }
 
 export interface SharedropApiErrorResponse {
+  downloadUrl?: string;
   reason?: string;
   requestId?: string;
   retryable?: boolean;
@@ -67,10 +68,12 @@ function parseRetryAfterMs(value: string | null): number | undefined {
 }
 
 function errorResponseDetails(res: Response, body: unknown): SharedropApiErrorResponse {
+  const downloadUrl = responseField(body, "download_url");
   const reason = responseField(body, "reason");
   const requestId = responseField(body, "request_id");
   const retryable = responseField(body, "retryable");
   return {
+    ...(typeof downloadUrl === "string" ? { downloadUrl } : {}),
     ...(typeof reason === "string" ? { reason } : {}),
     ...(typeof requestId === "string" ? { requestId } : {}),
     ...(typeof retryable === "boolean" ? { retryable } : {}),

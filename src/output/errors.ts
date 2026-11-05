@@ -146,6 +146,9 @@ export function handleError(error: unknown, opts: FormatOptions, hint?: string):
             error: {
               code: error.code,
               message: error.message,
+              ...(error.response?.downloadUrl
+                ? { download_url: error.response.downloadUrl }
+                : {}),
               ...(error.response?.reason ? { reason: error.response.reason } : {}),
               ...(error.response?.requestId
                 ? { request_id: error.response.requestId }
